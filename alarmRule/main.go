@@ -6,26 +6,41 @@ import (
 	"strings"
 )
 
-var statePattern = regexp.MustCompile(`(?s)(ALARM|OK|INSUFFICIENT_DATA|NOT)\s*\(\s*([^)]+?)\s*\)`)
+var (
+	statePattern         = regexp.MustCompile(`(?s)(ALARM|OK|INSUFFICIENT_DATA|NOT)\s*\(\s*([^)]+?)\s*\)`)
+	notTrueFalsePattern1 = regexp.MustCompile(`(?i)NOT\s*\(\s*(TRUE|FALSE)\s*\)`)
+	notTrueFalsePattern2 = regexp.MustCompile(`(?i)NOT\s+(TRUE|FALSE)\b`)
+	truePattern          = regexp.MustCompile(`(?i)\bTRUE\b`)
+	falsePattern         = regexp.MustCompile(`(?i)\bFALSE\b`)
+)
 
-// GŁÓWNA FUNKCJA – TO JEST TWOJA BRONIA ATOMOWA
+// JEDYNA FUNKCJA, KTÓREJ BĘDZIESZ UŻYWAŁ
 func Format(rule string) string {
 	s := rule
 
-	// 1. Najpierw zamień wszystkie TRUE/FALSE na małe litery (gdziekolwiek)
-	s = regexp.MustCompile(`(?i)\b(TRUE|FALSE)\b`).ReplaceAllString(s, func(m string) string {
-		return strings.ToLower(m)
+	// 1. NOT(TRUE) / NOT(FALSE) → (!true) / (!false)
+	s = notTrueFalsePattern1.ReplaceAllStringFunc(s, func(m string) string {
+		val := strings.ToLower(truePattern.FindString(m))
+		if val == "" {
+			val = strings.ToLower(falsePattern.FindString(m))
+		}
+		return "(!" + val + ")"
 	})
 
-	// 2. Teraz zamień KAŻDE wystąpienie NOT(true) / NOT(false) → !(true) / !(false)
-	//    Bez względu na spacje, nawiasy, wielkość liter
-	s = regexp.MustCompile(`(?i)NOT\s*\(\s*(true|false)\s*\)`).
-		ReplaceAllString(s, "(!$1)")
+	// 2. NOT true / NOT false → (!true) / (!false)
+	s = notTrueFalsePattern2.ReplaceAllStringFunc(s, func(m string) string {
+		val := strings.ToLower(truePattern.FindString(m))
+		if val == "" {
+			val = strings.ToLower(falsePattern.FindString(m))
+		}
+		return "(!" + val + ")"
+	})
 
-	s = regexp.MustCompile(`(?i)NOT\s+(true|false)`).
-		ReplaceAllString(s, "(!$1)")
+	// 3. Zamień wszystkie pozostałe TRUE/FALSE na małe litery
+	s = truePattern.ReplaceAllString(s, "true")
+	s = falsePattern.ReplaceAllString(s, "false")
 
-	// 3. Obsługa ALARM('name'), OK('name'), itd.
+	// 4. Formatuj ALARM('name'), OK('name'), itd.
 	s = statePattern.ReplaceAllStringFunc(s, func(m string) string {
 		caps := statePattern.FindStringSubmatch(m)
 		if len(caps) < 3 {
@@ -45,10 +60,8 @@ func Format(rule string) string {
 		return state + `('` + name + `')`
 	})
 
-	// 4. Finalne czyszczenie formatu
+	// 5. Czyść formatowanie
 	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
 	s = regexp.MustCompile(`\s+(AND|OR)\s+`).ReplaceAllString(s, " $1 ")
-	s = strings.TrimSpace(s)
-
-	return s
+	return strings.TrimSpace(s)
 }
