@@ -1,21 +1,25 @@
-// Najlepsza funkcja na świecie do CloudWatch Composite Alarms
-func FormatAlarmRule(rule string) string {
-	// Krok 1: normalizuj każdy ALARM(...)
-	normalized := regexp.MustCompile(`ALARM\s*\([^)]*\)`).ReplaceAllStringFunc(rule, func(m string) string {
-		inner := strings.Trim(m, "ALARM()")
-		inner = strings.TrimSpace(inner)
+func FormatCloudWatchAlarmRule(rule string) string {
+	re := regexp.MustCompile(`(?s)(ALARM|OK|INSUFFICIENT_DATA|NOT)\s*\(\s*([^)]+?)\s*\)`)
 
-		if s, err := strconv.Unquote(`"` + inner + `"`); err == nil {
-			name := strings.TrimSpace(strings.Trim(s, `"`))
-			return `ALARM('` + name + `')`
+	s := re.ReplaceAllStringFunc(rule, func(m string) string {
+		caps := re.FindStringSubmatch(m)
+		state := caps[1]
+		raw := caps[2]
+
+		var name string
+		if u, err := strconv.Unquote(`"` + raw + `"`); err == nil {
+			name = strings.Trim(u, `"'`)
+		} else {
+			name = strings.ReplaceAll(raw, `\"`, `"`)
+			name = strings.Trim(name, `"'`)
 		}
-		name := strings.ReplaceAll(inner, `\"`, `"`)
-		name = strings.Trim(name, `"`)
-		return `ALARM('` + strings.TrimSpace(name) + `')`
+		name = strings.TrimSpace(name)
+
+		return state + `('` + name + `')`
 	})
 
-	// Krok 2: czyść białe znaki
-	normalized = regexp.MustCompile(`\s+`).ReplaceAllString(normalized, " ")
-	normalized = regexp.MustCompile(`\s+(AND|OR|NOT)\s+`).ReplaceAllString(normalized, " $1 ")
-	return strings.TrimSpace(normalized)
+	// Piękny format
+	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
+	s = regexp.MustCompile(`\s+(AND|OR|NOT)\s+`).ReplaceAllString(s, " $1 ")
+	return strings.TrimSpace(s)
 }
