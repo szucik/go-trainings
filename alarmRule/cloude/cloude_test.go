@@ -263,6 +263,57 @@ func TestTransformAlarmRule(t *testing.T) {
 			input: `OK('"a)`,
 			want:  `OK('\'\"a')`,
 		},
+		// Real AWS scenarios
+		{
+			name:  "Real AWS - ALARM with double quotes and trailing space",
+			input: `ALARM("DobryAlarm") `,
+			want:  `ALARM('\"DobryAlarm\"')`,
+		},
+		{
+			name:  "Real AWS - variable interpolation pattern",
+			input: `ALARM("my-prod-alarm")`,
+			want:  `ALARM('\"my-prod-alarm\"')`,
+		},
+		{
+			name:  "Real AWS - ARN-like name",
+			input: `ALARM("arn:aws:cloudwatch:us-east-1:123456789012:alarm:MyAlarm")`,
+			want:  `ALARM('\"arn:aws:cloudwatch:us-east-1:123456789012:alarm:MyAlarm\"')`,
+		},
+		{
+			name:  "Real AWS - two alarms with AND",
+			input: `ALARM("DobryAlarm") AND ALARM("dobryAlarm2")`,
+			want:  `ALARM('\"DobryAlarm\"') && ALARM('\"dobryAlarm2\"')`,
+		},
+		// Real AWS scenarios - whitespace handling
+		{
+			name:  "Real AWS - with newlines",
+			input: "ALARM(\n\"DobryAlarm\"\n) OR ALARM(\n\"dobryAlarm2\"\n)",
+			want:  `ALARM('\"DobryAlarm\"') || ALARM('\"dobryAlarm2\"')`,
+		},
+		{
+			name:  "Real AWS - with tabs",
+			input: "ALARM(\t\"CPUHigh\"\t) AND ALARM(\t\"MemHigh\"\t)",
+			want:  `ALARM('\"CPUHigh\"') && ALARM('\"MemHigh\"')`,
+		},
+		{
+			name:  "Real AWS - mixed whitespace",
+			input: "ALARM( \n\t \"Test\" \n\t )",
+			want:  `ALARM('\"Test\"')`,
+		},
+		{
+			name:  "Real AWS - newlines in complex expression",
+			input: "ALARM(\n\"A\"\n) AND\nNOT ALARM(\n\"B\"\n)",
+			want:  `ALARM('\"A\"') && !ALARM('\"B\"')`,
+		},
+		{
+			name: "Real AWS - multiline formatted",
+			input: `ALARM(
+						"Production-CPU"
+						) AND ALARM(
+						"Production-Memory"
+						)`,
+			want: `ALARM('\"Production-CPU\"') && ALARM('\"Production-Memory\"')`,
+		},
 	}
 
 	for _, tt := range tests {
