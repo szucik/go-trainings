@@ -13,22 +13,29 @@ func TransformAlarmRule(input string) (string, error) {
 		return "", fmt.Errorf("empty input")
 	}
 
-	// Step 0: Normalize - add space after operators if missing
+	// Step 1: Transform alarm function calls FIRST (before any normalization)
+	input = transformAlarmCalls(input)
+
+	// Step 2: Normalize - add spaces around operators if missing
+	// After alarm calls are transformed, we can safely normalize
+	input = regexp.MustCompile(`\)AND\b`).ReplaceAllString(input, ") AND")
+	input = regexp.MustCompile(`\)OR\b`).ReplaceAllString(input, ") OR")
+	input = regexp.MustCompile(`\)NOT\b`).ReplaceAllString(input, ") NOT")
+
 	input = regexp.MustCompile(`\bAND\(`).ReplaceAllString(input, "AND (")
 	input = regexp.MustCompile(`\bOR\(`).ReplaceAllString(input, "OR (")
 	input = regexp.MustCompile(`\bNOT\(`).ReplaceAllString(input, "NOT (")
 
-	// Step 1: Transform boolean literals
+	// Step 3: Transform boolean literals
 	input = regexp.MustCompile(`\bTRUE\b`).ReplaceAllString(input, "true")
 	input = regexp.MustCompile(`\bFALSE\b`).ReplaceAllString(input, "false")
 
-	// Step 2: Transform operators
+	// Step 4: Transform operators
 	input = regexp.MustCompile(`\bNOT\s+`).ReplaceAllString(input, "!")
-	input = regexp.MustCompile(`\s+AND\s+`).ReplaceAllString(input, " && ")
-	input = regexp.MustCompile(`\s+OR\s+`).ReplaceAllString(input, " || ")
 
-	// Step 3: Transform alarm function calls
-	input = transformAlarmCalls(input)
+	input = regexp.MustCompile(`\s+AND\s+`).ReplaceAllString(input, " && ")
+
+	input = regexp.MustCompile(`\s+OR\s+`).ReplaceAllString(input, " || ")
 
 	return input, nil
 }
@@ -87,6 +94,7 @@ func transformAlarmCalls(input string) string {
 
 // findFunctionEnd finds the closing ) for a function
 // Strategy: find ) that is followed by whitespace + keyword, another ), or end of string
+// findFunctionEnd finds the closing ) for a function
 func findFunctionEnd(input string, start int) int {
 	pos := start
 
@@ -106,11 +114,14 @@ func findFunctionEnd(input string, start int) int {
 				return pos
 			}
 
-			// Check if next is ) or keyword (already transformed to symbols)
+			// Check if next is:
+			// - another )
+			// - AND/OR/NOT keywords (not yet transformed)
+			// - opening paren (for cases like ")AND(")
 			if input[nextPos] == ')' ||
-				strings.HasPrefix(input[nextPos:], "&&") ||
-				strings.HasPrefix(input[nextPos:], "||") ||
-				strings.HasPrefix(input[nextPos:], "!") {
+				strings.HasPrefix(input[nextPos:], "AND") ||
+				strings.HasPrefix(input[nextPos:], "OR") ||
+				strings.HasPrefix(input[nextPos:], "NOT") {
 				return pos
 			}
 		}
