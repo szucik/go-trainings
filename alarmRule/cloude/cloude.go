@@ -6,7 +6,6 @@ import (
 	"strings"
 )
 
-// TransformAlarmRule converts AWS CloudWatch AlarmRule to govaluate format
 func TransformAlarmRule(input string) (string, error) {
 	input = strings.TrimSpace(input)
 
@@ -14,12 +13,13 @@ func TransformAlarmRule(input string) (string, error) {
 		return "", fmt.Errorf("empty input")
 	}
 
-	// Step 1: Transform boolean literals
+	// Step 1: Transform boolean literals FIRST
 	input = regexp.MustCompile(`\bTRUE\b`).ReplaceAllString(input, "true")
 	input = regexp.MustCompile(`\bFALSE\b`).ReplaceAllString(input, "false")
 
-	// Step 2: Transform operators
-	// NOT → ! (remove space after !)
+	// Step 2: Transform operators (including NOT)
+	// NOT → ! but handle both "NOT (" and "NOT("
+	input = regexp.MustCompile(`\bNOT\s*\(`).ReplaceAllString(input, "!(")
 	input = regexp.MustCompile(`\bNOT\s+`).ReplaceAllString(input, "!")
 
 	// AND → &&
@@ -28,7 +28,7 @@ func TransformAlarmRule(input string) (string, error) {
 	// OR → ||
 	input = regexp.MustCompile(`\s+OR\s+`).ReplaceAllString(input, " || ")
 
-	// Step 3: Transform alarm function calls
+	// Step 3: Transform alarm function calls LAST
 	input = transformAlarmCalls(input)
 
 	return input, nil
