@@ -1,6 +1,10 @@
 package alarmrule
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Knetic/govaluate"
+)
 
 func TestTransformAlarmRule(t *testing.T) {
 	tests := []struct {
@@ -328,6 +332,177 @@ func TestTransformAlarmRule(t *testing.T) {
 			if !tt.wantErr && got != tt.want {
 				t.Errorf("TransformAlarmRule()\ninput: %q\ngot:   %q\nwant:  %q", tt.input, got, tt.want)
 			}
+		})
+	}
+}
+
+func TestGovaluateIntegration(t *testing.T) {
+	tests := []struct {
+		name       string
+		expression string
+		functions  map[string]govaluate.ExpressionFunction
+		wantResult interface{}
+		wantErr    bool
+	}{
+		{
+			name:       "Simple alarm call",
+			expression: `OK('test')`,
+			functions: map[string]govaluate.ExpressionFunction{
+				"OK": func(args ...interface{}) (interface{}, error) {
+					if len(args) > 0 {
+						t.Logf("OK received: %v (type: %T)", args[0], args[0])
+						return args[0] == "test", nil
+					}
+					return false, nil
+				},
+			},
+			wantResult: true,
+		},
+		{
+			name:       "Alarm with escaped quotes",
+			expression: `OK('\"a)\"')`,
+			functions: map[string]govaluate.ExpressionFunction{
+				"OK": func(args ...interface{}) (interface{}, error) {
+					// Sprawdzamy co govaluate przekazuje
+					t.Logf("OK received: %q (type: %T)", args[0], args[0])
+					return true, nil
+				},
+			},
+			wantResult: true,
+		},
+		{
+			name:       "Our transformed example",
+			expression: `ALARM('\"DobryAlarm\"')`,
+			functions: map[string]govaluate.ExpressionFunction{
+				"ALARM": func(args ...interface{}) (interface{}, error) {
+					t.Logf("ALARM received: %q", args[0])
+					// Sprawdzamy czy dostajemy "DobryAlarm" czy \"DobryAlarm\"
+					return true, nil
+				},
+			},
+			wantResult: true,
+		},
+		{
+			name:       "Boolean operations",
+			expression: `OK('alarm1') && ALARM('alarm2')`,
+			functions: map[string]govaluate.ExpressionFunction{
+				"OK": func(args ...interface{}) (interface{}, error) {
+					t.Logf("OK received: %q", args[0])
+					return true, nil
+				},
+				"ALARM": func(args ...interface{}) (interface{}, error) {
+					t.Logf("ALARM received: %q", args[0])
+					return true, nil
+				},
+			},
+			wantResult: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expr, err := govaluate.NewEvaluableExpressionWithFunctions(tt.expression, tt.functions)
+			if err != nil {
+				if !tt.wantErr {
+					t.Fatalf("Failed to create expression: %v", err)
+				}
+				return
+			}
+
+			result, err := expr.Evaluate(nil)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Evaluate() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr && result != tt.wantResult {
+				t.Errorf("Evaluate() = %v, want %v", result, tt.wantResult)
+			}
+		})
+	}
+}
+
+// TestFullPipeline testuje pełny pipeline: AWS → Transform → Govaluate
+func TestFullPipeline(t *testing.T) {
+	tests := []struct {
+		name          string
+		awsInput      string
+		expectedCalls map[string]string // function name → expected argument
+	}{
+		{
+			name:     "Simple alarm",
+			awsInput: `ALARM("DobryAlarm")`,
+			expectedCalls: map[string]string{
+				"ALARM": `"DobryAlarm"`, // oczekujemy że dostaniemy "DobryAlarm" (z cudzysłowami)
+			},
+		},
+		{
+			name:     "Alarm with parenthesis in name",
+			awsInput: `OK("a)")`,
+			expectedCalls: map[string]string{
+				"OK": `"a)"`, // oczekujemy "a)"
+			},
+		},
+		{
+			name:     "Two alarms with AND",
+			awsInput: `ALARM("Alarm1") AND ALARM("Alarm2")`,
+			expectedCalls: map[string]string{
+				"ALARM": `"Alarm1"`, // sprawdzimy pierwszy call
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Step 1: Transform AWS format to govaluate format
+			transformed, err := TransformAlarmRule(tt.awsInput)
+			if err != nil {
+				t.Fatalf("TransformAlarmRule failed: %v", err)
+			}
+
+			t.Logf("AWS Input:    %s", tt.awsInput)
+			t.Logf("Transformed:  %s", transformed)
+
+			// Step 2: Create govaluate expression with mock functions
+			receivedArgs := make(map[string]interface{})
+
+			functions := map[string]govaluate.ExpressionFunction{
+				"OK": func(args ...interface{}) (interface{}, error) {
+					if len(args) > 0 {
+						receivedArgs["OK"] = args[0]
+						t.Logf("OK() called with: %q", args[0])
+					}
+					return true, nil
+				},
+				"ALARM": func(args ...interface{}) (interface{}, error) {
+					if len(args) > 0 {
+						receivedArgs["ALARM"] = args[0]
+						t.Logf("ALARM() called with: %q", args[0])
+					}
+					return true, nil
+				},
+				"INSUFFICIENT_DATA": func(args ...interface{}) (interface{}, error) {
+					if len(args) > 0 {
+						receivedArgs["INSUFFICIENT_DATA"] = args[0]
+						t.Logf("INSUFFICIENT_DATA() called with: %q", args[0])
+					}
+					return true, nil
+				},
+			}
+
+			// Step 3: Evaluate
+			expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformed, functions)
+			if err != nil {
+				t.Fatalf("Failed to create govaluate expression: %v", err)
+			}
+
+			result, err := expr.Evaluate(nil)
+			if err != nil {
+				t.Fatalf("Failed to evaluate: %v", err)
+			}
+
+			t.Logf("Result: %v", result)
+			t.Logf("Received args: %+v", receivedArgs)
 		})
 	}
 }
