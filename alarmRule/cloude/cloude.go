@@ -123,6 +123,7 @@ func findFunctionEnd(input string, start int) int {
 
 // transformAlarmContent transforms alarm name according to rules
 func transformAlarmContent(content string) (string, error) {
+
 	// Trim whitespace
 	content = strings.TrimSpace(content)
 
