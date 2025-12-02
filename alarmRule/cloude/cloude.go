@@ -13,22 +13,21 @@ func TransformAlarmRule(input string) (string, error) {
 		return "", fmt.Errorf("empty input")
 	}
 
-	// Step 1: Transform boolean literals FIRST
+	// Step 0: Normalize - add space after operators if missing
+	input = regexp.MustCompile(`\bAND\(`).ReplaceAllString(input, "AND (")
+	input = regexp.MustCompile(`\bOR\(`).ReplaceAllString(input, "OR (")
+	input = regexp.MustCompile(`\bNOT\(`).ReplaceAllString(input, "NOT (")
+
+	// Step 1: Transform boolean literals
 	input = regexp.MustCompile(`\bTRUE\b`).ReplaceAllString(input, "true")
 	input = regexp.MustCompile(`\bFALSE\b`).ReplaceAllString(input, "false")
 
-	// Step 2: Transform operators (including NOT)
-	// NOT → ! but handle both "NOT (" and "NOT("
-	input = regexp.MustCompile(`\bNOT\s*\(`).ReplaceAllString(input, "!(")
+	// Step 2: Transform operators
 	input = regexp.MustCompile(`\bNOT\s+`).ReplaceAllString(input, "!")
-
-	// AND → &&
 	input = regexp.MustCompile(`\s+AND\s+`).ReplaceAllString(input, " && ")
-
-	// OR → ||
 	input = regexp.MustCompile(`\s+OR\s+`).ReplaceAllString(input, " || ")
 
-	// Step 3: Transform alarm function calls LAST
+	// Step 3: Transform alarm function calls
 	input = transformAlarmCalls(input)
 
 	return input, nil

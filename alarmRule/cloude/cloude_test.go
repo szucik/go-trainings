@@ -33,6 +33,21 @@ func TestTransformAlarmRule(t *testing.T) {
 			want:  "(false)",
 		},
 
+		{
+			name:  "TRUE AND(TRUE) - no space",
+			input: "TRUE AND(TRUE)",
+			want:  "true && (true)",
+		},
+		{
+			name:  "NOT(TRUE) - no space",
+			input: "NOT(TRUE)",
+			want:  "!(true)",
+		},
+		{
+			name:  "OK(a) OR(ALARM(b))",
+			input: "OK(a) OR(ALARM(b))",
+			want:  "OK('a') || (ALARM('b'))",
+		},
 		// NOT operator
 		{
 			name:  "NOT TRUE",
