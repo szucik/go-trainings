@@ -9,10 +9,9 @@ import (
 // TestTransformAlarmRule - wszystkie testy transformacji
 func TestTransformAlarmRule(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		want    string
-		wantErr bool
+		name  string
+		input string
+		want  string
 	}{
 		// Boolean literals
 		{name: "TRUE", input: "TRUE", want: "true"},
@@ -48,11 +47,11 @@ func TestTransformAlarmRule(t *testing.T) {
 		// Alarm states WITH quotes - AWS removes ONLY outer pair!
 		{name: `OK("a")`, input: `OK("a")`, want: `OK('a')`},
 		{name: "OK('a')", input: "OK('a')", want: "OK('a')"},
-		{name: "OK(a')", input: "OK(a')", want: `OK('a\'')`},         // Apostrof w nazwie - escape
-		{name: `OK("'a'")`, input: `OK("'a'")`, want: `OK('\'a\'')`}, // ✅ AWS: 'a' (inner quotes stay!)
+		{name: "OK(a')", input: "OK(a')", want: `OK('a\'')`},
+		{name: `OK("'a'")`, input: `OK("'a'")`, want: `OK('\'a\'')`},
 		{name: `OK("a)")`, input: `OK("a)")`, want: `OK('a)')`},
 		{name: "OK('a)')", input: "OK('a)')", want: "OK('a)')"},
-		{name: "OK(test'name)", input: "OK(test'name)", want: `OK('test\'name')`}, // ✅ Apostrof w środku
+		{name: "OK(test'name)", input: "OK(test'name)", want: `OK('test\'name')`},
 
 		// Whitespace handling
 		{name: "OK( a )", input: "OK( a )", want: "OK('a')"},
@@ -88,7 +87,7 @@ func TestTransformAlarmRule(t *testing.T) {
 		{name: "AWS example 2", input: "ALARM(CPUUtilizationTooHigh) AND NOT ALARM(DeploymentInProgress)", want: "ALARM('CPUUtilizationTooHigh') && !ALARM('DeploymentInProgress')"},
 		{name: "Complex AWS example", input: "(ALARM(WebServer1CPU) OR ALARM(WebServer2CPU)) AND NOT ALARM(MaintenanceWindow)", want: "(ALARM('WebServer1CPU') || ALARM('WebServer2CPU')) && !ALARM('MaintenanceWindow')"},
 
-		// Real AWS with quotes - AWS removes ONLY outer pair!
+		// Real AWS with quotes
 		{name: "Real AWS - ALARM with double quotes", input: `ALARM("DobryAlarm")`, want: `ALARM('DobryAlarm')`},
 		{name: "Real AWS - two alarms with AND", input: `ALARM("DobryAlarm") AND ALARM("dobryAlarm2")`, want: `ALARM('DobryAlarm') && ALARM('dobryAlarm2')`},
 		{name: "Real AWS - with newlines", input: "ALARM(\n\"DobryAlarm\"\n) OR ALARM(\n\"dobryAlarm2\"\n)", want: `ALARM('DobryAlarm') || ALARM('dobryAlarm2')`},
@@ -103,21 +102,224 @@ func TestTransformAlarmRule(t *testing.T) {
 		{name: "Real AWS - OK and ALARM mixed", input: `OK("HealthCheck") AND ALARM("ErrorRate")`, want: `OK('HealthCheck') && ALARM('ErrorRate')`},
 		{name: "Real AWS - INSUFFICIENT_DATA in mix", input: `ALARM("CPUHigh") AND NOT INSUFFICIENT_DATA("MetricMissing")`, want: `ALARM('CPUHigh') && !INSUFFICIENT_DATA('MetricMissing')`},
 
-		// Error cases
-		{name: "Empty input", input: "", wantErr: true},
+		// Edge cases
+		{name: "Empty input", input: "", want: ""},
+		{name: "Just whitespace", input: "   ", want: ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := TransformAlarmRule(tt.input)
+			got := TransformAlarmRule(tt.input)
 
-			if (err != nil) != tt.wantErr {
-				t.Errorf("TransformAlarmRule() error = %v, wantErr %v", err, tt.wantErr)
-				return
+			if got != tt.want {
+				t.Errorf("TransformAlarmRule()\ninput: %q\ngot:   %q\nwant:  %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCriticalCase - weryfikacja czy escape'owanie działa poprawnie
+func TestCriticalCase(t *testing.T) {
+	// AWS: OK("'test'") → alarm name = 'test'
+	input := `OK("'test'")`
+
+	t.Logf("AWS Input: %s", input)
+	t.Logf("AWS alarm name będzie: 'test' (z apostrofami)")
+
+	// Nasza transformacja
+	transformed := TransformAlarmRule(input)
+	t.Logf("Nasza transformacja: %s", transformed)
+
+	// Co dostanie govaluate?
+	var receivedArg string
+	functions := map[string]govaluate.ExpressionFunction{
+		"OK": func(args ...interface{}) (interface{}, error) {
+			if len(args) > 0 {
+				receivedArg = args[0].(string)
+			}
+			return true, nil
+		},
+	}
+
+	expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformed, functions)
+	if err != nil {
+		t.Fatalf("Govaluate parse failed: %v", err)
+	}
+
+	_, err = expr.Evaluate(nil)
+	if err != nil {
+		t.Fatalf("Govaluate evaluate failed: %v", err)
+	}
+
+	t.Logf("Govaluate otrzymał: %q", receivedArg)
+
+	expectedFromAWS := "'test'" // To jest nazwa alarmu w AWS!
+
+	if receivedArg != expectedFromAWS {
+		t.Errorf("❌ NIEZGODNE Z AWS!\nGovaluate dostał: %q\nAWS ma:           %q", receivedArg, expectedFromAWS)
+	} else {
+		t.Logf("✅ ZGODNE Z AWS! Govaluate dostał dokładnie to co AWS: %q", receivedArg)
+	}
+}
+
+// TestAllEdgeCasesWithAWS - porównanie z AWS dla wszystkich edge cases
+func TestAllEdgeCasesWithAWS(t *testing.T) {
+	tests := []struct {
+		awsInput     string
+		awsAlarmName string // Co AWS ma jako nazwę alarmu
+		description  string
+	}{
+		{
+			awsInput:     `ALARM("test")`,
+			awsAlarmName: `test`,
+			description:  "Simple double quotes",
+		},
+		{
+			awsInput:     `OK('test')`,
+			awsAlarmName: `test`,
+			description:  "Simple single quotes",
+		},
+		{
+			awsInput:     `OK("'test'")`,
+			awsAlarmName: `'test'`,
+			description:  "Double quotes with single quotes inside - AWS keeps inner",
+		},
+		{
+			awsInput:     `OK(test'name)`,
+			awsAlarmName: `test'name`,
+			description:  "Apostrophe in middle - no surrounding quotes",
+		},
+		{
+			awsInput:     `OK(a')`,
+			awsAlarmName: `a'`,
+			description:  "Apostrophe at end - no surrounding quotes",
+		},
+		{
+			awsInput:     `OK("a)")`,
+			awsAlarmName: `a)`,
+			description:  "Parenthesis inside quotes",
+		},
+		{
+			awsInput:     `ALARM('a)')`,
+			awsAlarmName: `a)`,
+			description:  "Parenthesis after apostrophe",
+		},
+		{
+			awsInput:     `OK(" a ")`,
+			awsAlarmName: ` a `,
+			description:  "Spaces inside quotes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.description, func(t *testing.T) {
+			// Nasza transformacja
+			transformed := TransformAlarmRule(tt.awsInput)
+
+			// Co dostanie govaluate?
+			var receivedArg string
+			functions := map[string]govaluate.ExpressionFunction{
+				"OK": func(args ...interface{}) (interface{}, error) {
+					if len(args) > 0 {
+						receivedArg = args[0].(string)
+					}
+					return true, nil
+				},
+				"ALARM": func(args ...interface{}) (interface{}, error) {
+					if len(args) > 0 {
+						receivedArg = args[0].(string)
+					}
+					return true, nil
+				},
 			}
 
-			if !tt.wantErr && got != tt.want {
-				t.Errorf("TransformAlarmRule()\ninput: %q\ngot:   %q\nwant:  %q", tt.input, got, tt.want)
+			expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformed, functions)
+			if err != nil {
+				t.Fatalf("Govaluate parse failed: %v\nTransformed: %s", err, transformed)
+			}
+
+			_, err = expr.Evaluate(nil)
+			if err != nil {
+				t.Fatalf("Govaluate evaluate failed: %v\nTransformed: %s", err, transformed)
+			}
+
+			t.Logf("AWS Input:          %s", tt.awsInput)
+			t.Logf("AWS alarm name:     %q", tt.awsAlarmName)
+			t.Logf("Transformed:        %s", transformed)
+			t.Logf("Govaluate received: %q", receivedArg)
+
+			if receivedArg != tt.awsAlarmName {
+				t.Errorf("❌ MISMATCH!\n  AWS alarm name:     %q\n  Govaluate received: %q",
+					tt.awsAlarmName, receivedArg)
+			} else {
+				t.Logf("✅ MATCH! Govaluate otrzymał dokładnie to co AWS ma w nazwie alarmu")
+			}
+		})
+	}
+}
+
+// TestGovaluateEscaping - test czy govaluate poprawnie interpretuje nasze escape'y
+func TestGovaluateEscaping(t *testing.T) {
+	tests := []struct {
+		name       string
+		expression string
+		expected   string
+	}{
+		{
+			name:       "Simple string",
+			expression: "OK('test')",
+			expected:   "test",
+		},
+		{
+			name:       "Escaped apostrophe",
+			expression: `OK('test\'s')`,
+			expected:   "test's",
+		},
+		{
+			name:       "Escaped quotes",
+			expression: `OK('\"test\"')`,
+			expected:   `"test"`,
+		},
+		{
+			name:       "Multiple escaped apostrophes",
+			expression: `OK('\'test\'')`,
+			expected:   "'test'",
+		},
+		{
+			name:       "Apostrophe at end",
+			expression: `OK('test\'')`,
+			expected:   "test'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var received string
+
+			functions := map[string]govaluate.ExpressionFunction{
+				"OK": func(args ...interface{}) (interface{}, error) {
+					if len(args) > 0 {
+						received = args[0].(string)
+					}
+					return true, nil
+				},
+			}
+
+			expr, err := govaluate.NewEvaluableExpressionWithFunctions(tt.expression, functions)
+			if err != nil {
+				t.Fatalf("Failed to parse: %v", err)
+			}
+
+			_, err = expr.Evaluate(nil)
+			if err != nil {
+				t.Fatalf("Failed to evaluate: %v", err)
+			}
+
+			if received != tt.expected {
+				t.Errorf("Mismatch!\n  Expression: %s\n  Got:  %q\n  Want: %q",
+					tt.expression, received, tt.expected)
+			} else {
+				t.Logf("✅ Expression: %s → %q", tt.expression, received)
 			}
 		})
 	}
@@ -137,14 +339,13 @@ func TestAllTransformedWithGovaluate(t *testing.T) {
 		{"NOT ALARM(a)", "NOT ALARM(a)", "!ALARM('a')"},
 		{"NOT INSUFFICIENT_DATA(a)", "NOT INSUFFICIENT_DATA(a)", "!INSUFFICIENT_DATA('a')"},
 
-		// With quotes - AWS removes ONLY outer pair
 		{`OK("a")`, `OK("a")`, `OK('a')`},
 		{"OK('a')", "OK('a')", "OK('a')"},
 		{"OK(a')", "OK(a')", `OK('a\'')`},
-		{`OK("'a'")`, `OK("'a'")`, `OK('\'a\'')`}, // ✅ Inner quotes stay
+		{`OK("'a'")`, `OK("'a'")`, `OK('\'a\'')`},
 		{`OK("a)")`, `OK("a)")`, `OK('a)')`},
 		{"OK('a)')", "OK('a)')", "OK('a)')"},
-		{"OK(test'name)", "OK(test'name)", `OK('test\'name')`}, // ✅ Apostrof w środku
+		{"OK(test'name)", "OK(test'name)", `OK('test\'name')`},
 
 		{"OK( a )", "OK( a )", "OK('a')"},
 		{`OK( "a" )`, `OK( "a" )`, `OK('a')`},
@@ -163,10 +364,7 @@ func TestAllTransformedWithGovaluate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := TransformAlarmRule(tt.input)
-			if err != nil {
-				t.Fatalf("TransformAlarmRule failed: %v", err)
-			}
+			got := TransformAlarmRule(tt.input)
 
 			if got != tt.want {
 				t.Fatalf("Transform mismatch:\ngot:  %q\nwant: %q", got, tt.want)
@@ -249,7 +447,7 @@ func TestGovaluateReceivesCorrectArguments(t *testing.T) {
 			name:             "Name with apostrophes inside - like AWS",
 			transformed:      `OK('\'test\'')`,
 			expectedFunction: "OK",
-			expectedArg:      `'test'`, // ✅ AWS: OK("'test'") → alarm name = 'test'
+			expectedArg:      `'test'`,
 		},
 		{
 			name:             "Name with apostrophe in middle",
@@ -339,7 +537,7 @@ func TestFullPipeline(t *testing.T) {
 		{
 			name:          "Alarm with inner quotes - AWS keeps them",
 			awsInput:      `OK("'test'")`,
-			expectedCalls: []string{`'test'`}, // ✅ AWS keeps inner quotes!
+			expectedCalls: []string{`'test'`},
 		},
 		{
 			name:          "Alarm with apostrophe in middle",
@@ -350,10 +548,7 @@ func TestFullPipeline(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			transformed, err := TransformAlarmRule(tt.awsInput)
-			if err != nil {
-				t.Fatalf("TransformAlarmRule failed: %v", err)
-			}
+			transformed := TransformAlarmRule(tt.awsInput)
 
 			t.Logf("AWS Input:    %s", tt.awsInput)
 			t.Logf("Transformed:  %s", transformed)
@@ -400,8 +595,7 @@ func TestFullPipeline(t *testing.T) {
 			t.Logf("Result: %v", result)
 			t.Logf("Call log: %v", callLog)
 			t.Logf("Expected: %v", tt.expectedCalls)
-
-			// Verify we got expected calls (accounting for short-circuit evaluation)
+			// Verify we got expected calls
 			for i, expected := range tt.expectedCalls {
 				if i < len(callLog) {
 					if callLog[i] != expected {
@@ -413,30 +607,25 @@ func TestFullPipeline(t *testing.T) {
 	}
 }
 
-// Benchmarks
-func BenchmarkTransformAlarmRule(b *testing.B) {
-	input := `(ALARM("CPU1") OR ALARM("CPU2")) AND NOT ALARM("Deploying")`
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = TransformAlarmRule(input)
-	}
-}
-
-func BenchmarkTransformAlarmRuleSimple(b *testing.B) {
-	input := `ALARM("SimpleAlarm")`
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = TransformAlarmRule(input)
-	}
-}
-
-func BenchmarkTransformAlarmRuleComplex(b *testing.B) {
-	input := `((ALARM("A") AND ALARM("B")) OR (OK("C") AND OK("D"))) AND NOT INSUFFICIENT_DATA("E")`
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = TransformAlarmRule(input)
-	}
-}
+// // Benchmarks
+// func BenchmarkTransformAlarmRule(b *testing.B) {
+// 	input := `(ALARM("CPU1") OR ALARM("CPU2")) AND NOT ALARM("Deploying")`
+// 	b.ResetTimer()
+// 	for i := 0; i < b.N; i++ {
+// 		_ = TransformAlarmRule(input)
+// 	}
+// }
+// func BenchmarkTransformAlarmRuleSimple(b *testing.B) {
+// 	input := ALARM("SimpleAlarm")
+// 	b.ResetTimer()
+// 	for i := 0; i < b.N; i++ {
+// 		_ = TransformAlarmRule(input)
+// 	}
+// }
+// func BenchmarkTransformAlarmRuleComplex(b *testing.B) {
+// 	input := `((ALARM("A") AND ALARM("B")) OR (OK("C") AND OK("D"))) AND NOT INSUFFICIENT_DATA("E")`
+// 	b.ResetTimer()
+// 	for i := 0; i < b.N; i++ {
+// 		_ = TransformAlarmRule(input)
+// 	}
+// }

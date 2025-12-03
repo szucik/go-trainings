@@ -7,12 +7,8 @@ import (
 )
 
 // TransformAlarmRule converts AWS CloudWatch AlarmRule to govaluate format
-func TransformAlarmRule(input string) (string, error) {
+func TransformAlarmRule(input string) string {
 	input = strings.TrimSpace(input)
-
-	if input == "" {
-		return "", fmt.Errorf("empty input")
-	}
 
 	// Step 1: Transform alarm function calls FIRST
 	input = transformAlarmCalls(input)
@@ -35,7 +31,7 @@ func TransformAlarmRule(input string) (string, error) {
 	input = regexp.MustCompile(`\s+AND\s+`).ReplaceAllString(input, " && ")
 	input = regexp.MustCompile(`\s+OR\s+`).ReplaceAllString(input, " || ")
 
-	return input, nil
+	return input
 }
 
 // transformAlarmCalls finds and transforms all alarm function calls
