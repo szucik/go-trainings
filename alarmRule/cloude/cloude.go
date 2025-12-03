@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// TransformAlarmRule converts AWS CloudWatch AlarmRule to govaluate format
 func TransformAlarmRule(input string) (string, error) {
 	input = strings.TrimSpace(input)
 
@@ -13,11 +14,10 @@ func TransformAlarmRule(input string) (string, error) {
 		return "", fmt.Errorf("empty input")
 	}
 
-	// Step 1: Transform alarm function calls FIRST (before any normalization)
+	// Step 1: Transform alarm function calls FIRST
 	input = transformAlarmCalls(input)
 
 	// Step 2: Normalize - add spaces around operators if missing
-	// After alarm calls are transformed, we can safely normalize
 	input = regexp.MustCompile(`\)AND\b`).ReplaceAllString(input, ") AND")
 	input = regexp.MustCompile(`\)OR\b`).ReplaceAllString(input, ") OR")
 	input = regexp.MustCompile(`\)NOT\b`).ReplaceAllString(input, ") NOT")
@@ -32,9 +32,7 @@ func TransformAlarmRule(input string) (string, error) {
 
 	// Step 4: Transform operators
 	input = regexp.MustCompile(`\bNOT\s+`).ReplaceAllString(input, "!")
-
 	input = regexp.MustCompile(`\s+AND\s+`).ReplaceAllString(input, " && ")
-
 	input = regexp.MustCompile(`\s+OR\s+`).ReplaceAllString(input, " || ")
 
 	return input, nil
@@ -54,7 +52,7 @@ func transformAlarmCalls(input string) string {
 				// Found a function call
 				startPos := pos + len(funcName) + 1 // after "FUNC("
 
-				// Find the closing paren - look for last ) before next keyword or end
+				// Find the closing paren
 				endPos := findFunctionEnd(input, startPos)
 				if endPos == -1 {
 					// No closing paren, just copy the rest
@@ -93,8 +91,6 @@ func transformAlarmCalls(input string) string {
 }
 
 // findFunctionEnd finds the closing ) for a function
-// Strategy: find ) that is followed by whitespace + keyword, another ), or end of string
-// findFunctionEnd finds the closing ) for a function
 func findFunctionEnd(input string, start int) int {
 	pos := start
 
@@ -114,10 +110,7 @@ func findFunctionEnd(input string, start int) int {
 				return pos
 			}
 
-			// Check if next is:
-			// - another )
-			// - AND/OR/NOT keywords (not yet transformed)
-			// - opening paren (for cases like ")AND(")
+			// Check if next is ) or keyword
 			if input[nextPos] == ')' ||
 				strings.HasPrefix(input[nextPos:], "AND") ||
 				strings.HasPrefix(input[nextPos:], "OR") ||
@@ -131,9 +124,9 @@ func findFunctionEnd(input string, start int) int {
 	return -1
 }
 
-// transformAlarmContent transforms alarm name according to rules
+// transformAlarmContent transforms alarm name according to AWS rules
+// AWS removes ONLY ONE OUTER PAIR of matching quotes!
 func transformAlarmContent(content string) (string, error) {
-
 	// Trim whitespace
 	content = strings.TrimSpace(content)
 
@@ -141,16 +134,29 @@ func transformAlarmContent(content string) (string, error) {
 		return "''", nil
 	}
 
-	// Step 1: If content starts and ends with ' - remove them
-	if len(content) >= 2 && content[0] == '\'' && content[len(content)-1] == '\'' {
+	// Step 1: Remove ONLY ONE outer pair of quotes (like AWS does!)
+	// Examples from AWS:
+	// ALARM("test") → alarm name = test (outer " removed)
+	// OK("'test'") → alarm name = 'test' (only outer " removed, inner ' stay!)
+	// OK('test') → alarm name = test (outer ' removed)
+	// OK(test'name) → alarm name = test'name (no quotes to remove)
+	// OK(a') → alarm name = a' (no matching pair)
+
+	if len(content) >= 2 && content[0] == '"' && content[len(content)-1] == '"' {
+		// Remove outer double quotes
+		content = content[1 : len(content)-1]
+	} else if len(content) >= 2 && content[0] == '\'' && content[len(content)-1] == '\'' {
+		// Remove outer single quotes (only if no double quotes were removed)
 		content = content[1 : len(content)-1]
 	}
 
-	// Step 2: Escape all " and '
+	// Step 2: Escape any remaining quotes inside the name for govaluate
+	// AWS: OK(test'name) → alarm name = "test'name" (apostrophe stays)
+	// For govaluate we must escape it
 	content = strings.ReplaceAll(content, `"`, `\"`)
 	content = strings.ReplaceAll(content, `'`, `\'`)
 
-	// Step 3: Wrap in single quotes
+	// Step 3: Wrap in single quotes for govaluate syntax
 	return fmt.Sprintf("'%s'", content), nil
 }
 
