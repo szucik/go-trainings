@@ -6,8 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestTransformAlarmRule - wszystkie testy transformacji
-func Test_TransformAlarmRule(t *testing.T) {
+func TestTransformAlarmRule(t *testing.T) {
 	testCases := []struct {
 		name  string
 		input string
@@ -29,7 +28,7 @@ func Test_TransformAlarmRule(t *testing.T) {
 		{name: "NOT(TRUE)", input: "NOT(TRUE)", want: "!(true)"},
 		{name: "NOT(FALSE)", input: "NOT(FALSE)", want: "!(false)"},
 
-		// Normalization cases
+		// Normalization
 		{name: "(TRUE)AND TRUE", input: "(TRUE)AND TRUE", want: "(true) && true"},
 		{name: "TRUE AND(TRUE)", input: "TRUE AND(TRUE)", want: "true && (true)"},
 		{name: "(TRUE)AND(FALSE)", input: "(TRUE)AND(FALSE)", want: "(true) && (false)"},
@@ -39,12 +38,12 @@ func Test_TransformAlarmRule(t *testing.T) {
 		{name: "NOT ALARM(a)", input: "NOT ALARM(a)", want: "!ALARM('a')"},
 		{name: "NOT INSUFFICIENT_DATA(a)", input: "NOT INSUFFICIENT_DATA(a)", want: "!INSUFFICIENT_DATA('a')"},
 
-		// Basic alarm states - NO QUOTES
+		// Basic alarm states
 		{name: "OK(a)", input: "OK(a)", want: "OK('a')"},
 		{name: "ALARM(a)", input: "ALARM(a)", want: "ALARM('a')"},
 		{name: "INSUFFICIENT_DATA(a)", input: "INSUFFICIENT_DATA(a)", want: "INSUFFICIENT_DATA('a')"},
 
-		// Alarm states WITH quotes - AWS removes ONLY outer pair!
+		// Quotes handling - AWS removes only outer pair
 		{name: `OK("a")`, input: `OK("a")`, want: `OK('a')`},
 		{name: "OK('a')", input: "OK('a')", want: "OK('a')"},
 		{name: "OK(a')", input: "OK(a')", want: `OK('a\'')`},
@@ -78,42 +77,39 @@ func Test_TransformAlarmRule(t *testing.T) {
 		{name: "NOT OK(a) AND NOT ALARM(b)", input: "NOT OK(a) AND NOT ALARM(b)", want: "!OK('a') && !ALARM('b')"},
 		{name: "(OK(a) OR ALARM(b)) AND INSUFFICIENT_DATA(c)", input: "(OK(a) OR ALARM(b)) AND INSUFFICIENT_DATA(c)", want: "(OK('a') || ALARM('b')) && INSUFFICIENT_DATA('c')"},
 
-		// Special characters in alarm names
-		{name: "OK(my-alarm-123)", input: "OK(my-alarm-123)", want: "OK('my-alarm-123')"},
-		{name: "ALARM(prod/web/cpu)", input: "ALARM(prod/web/cpu)", want: "ALARM('prod/web/cpu')"},
+		// Special characters
+		{name: "Hyphens in name", input: "OK(my-alarm-123)", want: "OK('my-alarm-123')"},
+		{name: "Slashes in name", input: "ALARM(prod/web/cpu)", want: "ALARM('prod/web/cpu')"},
 
 		// Real AWS examples
-		{name: "AWS example 1", input: "ALARM(CPUUtilizationTooHigh) AND ALARM(DiskReadOpsTooHigh)", want: "ALARM('CPUUtilizationTooHigh') && ALARM('DiskReadOpsTooHigh')"},
-		{name: "AWS example 2", input: "ALARM(CPUUtilizationTooHigh) AND NOT ALARM(DeploymentInProgress)", want: "ALARM('CPUUtilizationTooHigh') && !ALARM('DeploymentInProgress')"},
-		{name: "Complex AWS example", input: "(ALARM(WebServer1CPU) OR ALARM(WebServer2CPU)) AND NOT ALARM(MaintenanceWindow)", want: "(ALARM('WebServer1CPU') || ALARM('WebServer2CPU')) && !ALARM('MaintenanceWindow')"},
+		{name: "Two alarms with AND", input: "ALARM(CPUUtilizationTooHigh) AND ALARM(DiskReadOpsTooHigh)", want: "ALARM('CPUUtilizationTooHigh') && ALARM('DiskReadOpsTooHigh')"},
+		{name: "AND with NOT", input: "ALARM(CPUUtilizationTooHigh) AND NOT ALARM(DeploymentInProgress)", want: "ALARM('CPUUtilizationTooHigh') && !ALARM('DeploymentInProgress')"},
+		{name: "Nested OR and NOT", input: "(ALARM(WebServer1CPU) OR ALARM(WebServer2CPU)) AND NOT ALARM(MaintenanceWindow)", want: "(ALARM('WebServer1CPU') || ALARM('WebServer2CPU')) && !ALARM('MaintenanceWindow')"},
 
-		// Real AWS with quotes
-		{name: "Real AWS - ALARM with double quotes", input: `ALARM("DobryAlarm")`, want: `ALARM('DobryAlarm')`},
-		{name: "Real AWS - two alarms with AND", input: `ALARM("DobryAlarm") AND ALARM("dobryAlarm2")`, want: `ALARM('DobryAlarm') && ALARM('dobryAlarm2')`},
-		{name: "Real AWS - with newlines", input: "ALARM(\n\"DobryAlarm\"\n) OR ALARM(\n\"dobryAlarm2\"\n)", want: `ALARM('DobryAlarm') || ALARM('dobryAlarm2')`},
-		{name: "Real AWS - with tabs", input: "ALARM(\t\"CPUHigh\"\t) AND ALARM(\t\"MemHigh\"\t)", want: `ALARM('CPUHigh') && ALARM('MemHigh')`},
-		{name: "Real AWS - mixed whitespace", input: "ALARM( \n\t \"Test\" \n\t )", want: `ALARM('Test')`},
-		{name: "Real AWS - newlines in complex expression", input: "ALARM(\n\"A\"\n) AND\nNOT ALARM(\n\"B\"\n)", want: `ALARM('A') && !ALARM('B')`},
-		{name: "Real AWS - multiline formatted", input: "ALARM(\n\"Production-CPU\"\n) AND ALARM(\n\"Production-Memory\"\n)", want: `ALARM('Production-CPU') && ALARM('Production-Memory')`},
-		{name: "Real AWS - ARN-like name", input: `ALARM("arn:aws:cloudwatch:us-east-1:123456789012:alarm:MyAlarm")`, want: `ALARM('arn:aws:cloudwatch:us-east-1:123456789012:alarm:MyAlarm')`},
-		{name: "Real AWS - three alarms combined", input: `ALARM("Alarm1") AND ALARM("Alarm2") OR ALARM("Alarm3")`, want: `ALARM('Alarm1') && ALARM('Alarm2') || ALARM('Alarm3')`},
-		{name: "Real AWS - with NOT", input: `ALARM("Production") AND NOT ALARM("Maintenance")`, want: `ALARM('Production') && !ALARM('Maintenance')`},
-		{name: "Real AWS - complex with parentheses", input: `(ALARM("CPU1") OR ALARM("CPU2")) AND NOT ALARM("Deploying")`, want: `(ALARM('CPU1') || ALARM('CPU2')) && !ALARM('Deploying')`},
-		{name: "Real AWS - OK and ALARM mixed", input: `OK("HealthCheck") AND ALARM("ErrorRate")`, want: `OK('HealthCheck') && ALARM('ErrorRate')`},
-		{name: "Real AWS - INSUFFICIENT_DATA in mix", input: `ALARM("CPUHigh") AND NOT INSUFFICIENT_DATA("MetricMissing")`, want: `ALARM('CPUHigh') && !INSUFFICIENT_DATA('MetricMissing')`},
+		// With quotes
+		{name: "Double quotes", input: `ALARM("testAlarm1")`, want: `ALARM('testAlarm1')`},
+		{name: "Two alarms with quotes", input: `ALARM("testAlarm1") AND ALARM("testAlarm2")`, want: `ALARM('testAlarm1') && ALARM('testAlarm2')`},
+		{name: "With newlines", input: "ALARM(\n\"testAlarm1\"\n) OR ALARM(\n\"testAlarm2\"\n)", want: `ALARM('testAlarm1') || ALARM('testAlarm2')`},
+		{name: "With tabs", input: "ALARM(\t\"CPUHigh\"\t) AND ALARM(\t\"MemHigh\"\t)", want: `ALARM('CPUHigh') && ALARM('MemHigh')`},
+		{name: "Mixed whitespace", input: "ALARM( \n\t \"testAlarm\" \n\t )", want: `ALARM('testAlarm')`},
+		{name: "Newlines in expression", input: "ALARM(\n\"alarm1\"\n) AND\nNOT ALARM(\n\"alarm2\"\n)", want: `ALARM('alarm1') && !ALARM('alarm2')`},
+		{name: "Multiline formatted", input: "ALARM(\n\"prod-cpu\"\n) AND ALARM(\n\"prod-memory\"\n)", want: `ALARM('prod-cpu') && ALARM('prod-memory')`},
+		{name: "ARN format", input: `ALARM("arn:aws:cloudwatch:us-east-1:123456789012:alarm:MyAlarm")`, want: `ALARM('arn:aws:cloudwatch:us-east-1:123456789012:alarm:MyAlarm')`},
+		{name: "Three alarms", input: `ALARM("alarm1") AND ALARM("alarm2") OR ALARM("alarm3")`, want: `ALARM('alarm1') && ALARM('alarm2') || ALARM('alarm3')`},
+		{name: "Production scenario", input: `ALARM("prod-alert") AND NOT ALARM("maintenance")`, want: `ALARM('prod-alert') && !ALARM('maintenance')`},
+		{name: "Complex nested", input: `(ALARM("cpu1") OR ALARM("cpu2")) AND NOT ALARM("deploying")`, want: `(ALARM('cpu1') || ALARM('cpu2')) && !ALARM('deploying')`},
+		{name: "Mixed functions", input: `OK("health-check") AND ALARM("error-rate")`, want: `OK('health-check') && ALARM('error-rate')`},
+		{name: "With INSUFFICIENT_DATA", input: `ALARM("cpu-high") AND NOT INSUFFICIENT_DATA("metric-missing")`, want: `ALARM('cpu-high') && !INSUFFICIENT_DATA('metric-missing')`},
 
 		// Edge cases
 		{name: "Empty input", input: "", want: ""},
-		{name: "Just whitespace", input: "   ", want: ""},
+		{name: "Whitespace only", input: "   ", want: ""},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Act
 			got := TransformAlarmRule(tc.input)
-
-			// Assert
-			assert.Equal(t, tc.want, got, "Transformation should match expected output")
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
