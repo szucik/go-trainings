@@ -6,8 +6,9 @@ import (
 	"github.com/Knetic/govaluate"
 )
 
+// BenchmarkTransformAlarmRuleSimple benchmarks simple alarm transformation.
 func BenchmarkTransformAlarmRuleSimple(b *testing.B) {
-	input := `ALARM("SimpleAlarm")`
+	input := `ALARM("simple-alarm")`
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -15,6 +16,7 @@ func BenchmarkTransformAlarmRuleSimple(b *testing.B) {
 	}
 }
 
+// BenchmarkTransformAlarmRuleComplex benchmarks complex alarm rule transformation.
 func BenchmarkTransformAlarmRuleComplex(b *testing.B) {
 	input := `((ALARM("A") AND ALARM("B")) OR (OK("C") AND OK("D"))) AND NOT INSUFFICIENT_DATA("E")`
 
@@ -24,7 +26,7 @@ func BenchmarkTransformAlarmRuleComplex(b *testing.B) {
 	}
 }
 
-// BenchmarkTransformAlarmRuleWithNewlines - benchmark z newlines
+// BenchmarkTransformAlarmRuleWithNewlines benchmarks transformation with newlines.
 func BenchmarkTransformAlarmRuleWithNewlines(b *testing.B) {
 	input := "ALARM(\n\"cpu-alarm\"\n) AND ALARM(\n\"memory-alarm\"\n)"
 
@@ -34,7 +36,7 @@ func BenchmarkTransformAlarmRuleWithNewlines(b *testing.B) {
 	}
 }
 
-// BenchmarkTransformAlarmRuleMultiple - benchmark wielu alarmów
+// BenchmarkTransformAlarmRuleMultiple benchmarks transformation with multiple alarms.
 func BenchmarkTransformAlarmRuleMultiple(b *testing.B) {
 	input := `ALARM("A") AND ALARM("B") AND ALARM("C") AND ALARM("D") AND ALARM("E")`
 
@@ -44,7 +46,7 @@ func BenchmarkTransformAlarmRuleMultiple(b *testing.B) {
 	}
 }
 
-// BenchmarkTransformAlarmRuleDeeplyNested - benchmark głęboko zagnieżdżonych wyrażeń
+// BenchmarkTransformAlarmRuleDeeplyNested benchmarks deeply nested expressions.
 func BenchmarkTransformAlarmRuleDeeplyNested(b *testing.B) {
 	input := `((((ALARM("A") OR ALARM("B")) AND ALARM("C")) OR ALARM("D")) AND ALARM("E"))`
 
@@ -54,7 +56,7 @@ func BenchmarkTransformAlarmRuleDeeplyNested(b *testing.B) {
 	}
 }
 
-// BenchmarkTransformAlarmRuleWithSpecialChars - benchmark ze specjalnymi znakami
+// BenchmarkTransformAlarmRuleWithSpecialChars benchmarks transformation with special characters.
 func BenchmarkTransformAlarmRuleWithSpecialChars(b *testing.B) {
 	input := `ALARM("arn:aws:cloudwatch:us-east-1:123456:alarm:prod/web/cpu-high")`
 
@@ -64,7 +66,7 @@ func BenchmarkTransformAlarmRuleWithSpecialChars(b *testing.B) {
 	}
 }
 
-// BenchmarkFullPipeline - benchmark pełnego pipeline: Transform + Govaluate
+// BenchmarkFullPipeline benchmarks the complete pipeline: Transform + Govaluate.
 func BenchmarkFullPipeline(b *testing.B) {
 	input := `ALARM("cpu-high") AND ALARM("memory-high")`
 
@@ -82,7 +84,7 @@ func BenchmarkFullPipeline(b *testing.B) {
 	}
 }
 
-// BenchmarkFullPipelineComplex - benchmark pełnego pipeline dla złożonych wyrażeń
+// BenchmarkFullPipelineComplex benchmarks full pipeline for complex expressions.
 func BenchmarkFullPipelineComplex(b *testing.B) {
 	input := `(ALARM("CPU1") OR ALARM("CPU2")) AND NOT ALARM("Deploying")`
 
@@ -100,7 +102,7 @@ func BenchmarkFullPipelineComplex(b *testing.B) {
 	}
 }
 
-// BenchmarkGovaluateOnly - benchmark tylko govaluate (bez transformacji)
+// BenchmarkGovaluateOnly benchmarks only govaluate evaluation (without transformation).
 func BenchmarkGovaluateOnly(b *testing.B) {
 	expression := `ALARM('cpu-high') && ALARM('memory-high')`
 
@@ -118,7 +120,7 @@ func BenchmarkGovaluateOnly(b *testing.B) {
 	}
 }
 
-// BenchmarkTransformOnly - benchmark tylko transformacji (bez govaluate)
+// BenchmarkTransformOnly benchmarks only transformation (without govaluate).
 func BenchmarkTransformOnly(b *testing.B) {
 	input := `ALARM("cpu-high") AND ALARM("memory-high")`
 
@@ -128,7 +130,7 @@ func BenchmarkTransformOnly(b *testing.B) {
 	}
 }
 
-// BenchmarkTransformWithQuotes - benchmark transformacji z różnymi cudzysłowami
+// BenchmarkTransformWithQuotes benchmarks transformation with different quote styles.
 func BenchmarkTransformWithQuotes(b *testing.B) {
 	testCases := []struct {
 		name  string
@@ -162,7 +164,7 @@ func BenchmarkTransformWithQuotes(b *testing.B) {
 	}
 }
 
-// BenchmarkTransformOperators - benchmark transformacji różnych operatorów
+// BenchmarkTransformOperators benchmarks transformation of different operators.
 func BenchmarkTransformOperators(b *testing.B) {
 	testCases := []struct {
 		name  string
@@ -196,7 +198,7 @@ func BenchmarkTransformOperators(b *testing.B) {
 	}
 }
 
-// BenchmarkTransformAlarmCount - benchmark w zależności od liczby alarmów
+// BenchmarkTransformAlarmCount benchmarks transformation based on number of alarms.
 func BenchmarkTransformAlarmCount(b *testing.B) {
 	testCases := []struct {
 		name  string
@@ -230,7 +232,7 @@ func BenchmarkTransformAlarmCount(b *testing.B) {
 	}
 }
 
-// BenchmarkTransformNestingDepth - benchmark w zależności od głębokości zagnieżdżenia
+// BenchmarkTransformNestingDepth benchmarks transformation based on nesting depth.
 func BenchmarkTransformNestingDepth(b *testing.B) {
 	testCases := []struct {
 		name  string
@@ -264,7 +266,7 @@ func BenchmarkTransformNestingDepth(b *testing.B) {
 	}
 }
 
-// BenchmarkTransformAlarmNameLength - benchmark w zależności od długości nazwy alarmu
+// BenchmarkTransformAlarmNameLength benchmarks transformation based on alarm name length.
 func BenchmarkTransformAlarmNameLength(b *testing.B) {
 	testCases := []struct {
 		name  string
@@ -298,7 +300,7 @@ func BenchmarkTransformAlarmNameLength(b *testing.B) {
 	}
 }
 
-// BenchmarkFullPipelineVariations - benchmark różnych scenariuszy pełnego pipeline
+// BenchmarkFullPipelineVariations benchmarks full pipeline with different scenarios.
 func BenchmarkFullPipelineVariations(b *testing.B) {
 	testCases := []struct {
 		name  string
@@ -354,7 +356,7 @@ func BenchmarkFullPipelineVariations(b *testing.B) {
 	}
 }
 
-// BenchmarkMemoryAllocation - benchmark alokacji pamięci
+// BenchmarkMemoryAllocation benchmarks memory allocations during transformation.
 func BenchmarkMemoryAllocation(b *testing.B) {
 	input := `(ALARM("CPU1") OR ALARM("CPU2")) AND NOT ALARM("Deploying")`
 
@@ -366,7 +368,7 @@ func BenchmarkMemoryAllocation(b *testing.B) {
 	}
 }
 
-// BenchmarkConcurrentTransform - benchmark współbieżnych transformacji
+// BenchmarkConcurrentTransform benchmarks concurrent transformation operations.
 func BenchmarkConcurrentTransform(b *testing.B) {
 	input := `ALARM("cpu-high") AND ALARM("memory-high")`
 
@@ -377,7 +379,7 @@ func BenchmarkConcurrentTransform(b *testing.B) {
 	})
 }
 
-// BenchmarkConcurrentFullPipeline - benchmark współbieżnego pełnego pipeline
+// BenchmarkConcurrentFullPipeline benchmarks concurrent full pipeline operations.
 func BenchmarkConcurrentFullPipeline(b *testing.B) {
 	input := `ALARM("cpu-high") AND ALARM("memory-high")`
 
@@ -396,7 +398,7 @@ func BenchmarkConcurrentFullPipeline(b *testing.B) {
 	})
 }
 
-// BenchmarkRealWorldScenarios - benchmark rzeczywistych scenariuszy
+// BenchmarkRealWorldScenarios benchmarks real-world AWS alarm scenarios.
 func BenchmarkRealWorldScenarios(b *testing.B) {
 	testCases := []struct {
 		name     string

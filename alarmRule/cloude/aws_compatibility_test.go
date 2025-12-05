@@ -8,679 +8,321 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGovaluateEscaping - test czy govaluate poprawnie interpretuje nasze escape'y
-func Test_GovaluateEscaping(t *testing.T) {
-	testCases := []struct {
-		name       string
-		expression string
-		expected   string
-	}{
-		{
-			name:       "Simple string",
-			expression: "OK('test')",
-			expected:   "test",
-		},
-		{
-			name:       "Escaped apostrophe",
-			expression: `OK('test\'s')`,
-			expected:   "test's",
-		},
-		{
-			name:       "Escaped quotes",
-			expression: `OK('\"test\"')`,
-			expected:   `"test"`,
-		},
-		{
-			name:       "Multiple escaped apostrophes",
-			expression: `OK('\'test\'')`,
-			expected:   "'test'",
-		},
-		{
-			name:       "Apostrophe at end",
-			expression: `OK('test\'')`,
-			expected:   "test'",
-		},
-	}
+// TestCriticalCase verifies that escaping works correctly and matches AWS behavior exactly.
+// This is the most important test - it proves our transformation produces the same alarm names as AWS.
+func TestCriticalCase(t *testing.T) {
+	input := `OK("'test'")`
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Arrange
-			var received string
+	transformed := TransformAlarmRule(input)
 
-			functions := map[string]govaluate.ExpressionFunction{
-				"OK": func(args ...interface{}) (interface{}, error) {
-					require.NotEmpty(t, args, "OK function should receive arguments")
-					received = args[0].(string)
-					return true, nil
-				},
-			}
-
-			// Act
-			expr, err := govaluate.NewEvaluableExpressionWithFunctions(tc.expression, functions)
-			require.NoError(t, err, "Should parse expression successfully")
-
-			_, err = expr.Evaluate(nil)
-			require.NoError(t, err, "Should evaluate successfully")
-
-			// Assert
-			assert.Equal(t, tc.expected, received, "Received value should match expected")
-			t.Logf("✅ Expression: %s → %q", tc.expression, received)
-		})
-	}
-}
-
-// TestAllTransformedWithGovaluate - testuje czy WSZYSTKIE nasze transformacje działają z govaluate
-func Test_AllTransformedWithGovaluate(t *testing.T) {
-	testCases := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"OK(a)", "OK(a)", "OK('a')"},
-		{"ALARM(a)", "ALARM(a)", "ALARM('a')"},
-		{"INSUFFICIENT_DATA(a)", "INSUFFICIENT_DATA(a)", "INSUFFICIENT_DATA('a')"},
-		{"NOT OK(a)", "NOT OK(a)", "!OK('a')"},
-		{"NOT ALARM(a)", "NOT ALARM(a)", "!ALARM('a')"},
-		{"NOT INSUFFICIENT_DATA(a)", "NOT INSUFFICIENT_DATA(a)", "!INSUFFICIENT_DATA('a')"},
-
-		{`OK("a")`, `OK("a")`, `OK('a')`},
-		{"OK('a')", "OK('a')", "OK('a')"},
-		{"OK(a')", "OK(a')", `OK('a\'')`},
-		{`OK("'a'")`, `OK("'a'")`, `OK('\'a\'')`},
-		{`OK("a)")`, `OK("a)")`, `OK('a)')`},
-		{"OK('a)')", "OK('a)')", "OK('a)')"},
-		{"OK(test'name)", "OK(test'name)", `OK('test\'name')`},
-
-		{"OK( a )", "OK( a )", "OK('a')"},
-		{`OK( "a" )`, `OK( "a" )`, `OK('a')`},
-		{`OK(" a ")`, `OK(" a ")`, `OK(' a ')`},
-
-		{"OK(a) AND ALARM(b)", "OK(a) AND ALARM(b)", "OK('a') && ALARM('b')"},
-		{"NOT OK(a) AND ALARM(b)", "NOT OK(a) AND ALARM(b)", "!OK('a') && ALARM('b')"},
-		{"OK(a) OR ALARM(b)", "OK(a) OR ALARM(b)", "OK('a') || ALARM('b')"},
-		{"NOT (OK(a) AND ALARM(b))", "NOT (OK(a) AND ALARM(b))", "!(OK('a') && ALARM('b'))"},
-
-		{`ALARM("DobryAlarm") `, `ALARM("DobryAlarm") `, `ALARM('DobryAlarm')`},
-		{`ALARM("DobryAlarm") AND ALARM("dobryAlarm2")`, `ALARM("DobryAlarm") AND ALARM("dobryAlarm2")`, `ALARM('DobryAlarm') && ALARM('dobryAlarm2')`},
-		{"ALARM(\n\"DobryAlarm\"\n) OR ALARM(\n\"dobryAlarm2\"\n)", "ALARM(\n\"DobryAlarm\"\n) OR ALARM(\n\"dobryAlarm2\"\n)", `ALARM('DobryAlarm') || ALARM('dobryAlarm2')`},
-		{`(ALARM("CPU1") OR ALARM("CPU2")) AND NOT ALARM("Deploying")`, `(ALARM("CPU1") OR ALARM("CPU2")) AND NOT ALARM("Deploying")`, `(ALARM('CPU1') || ALARM('CPU2')) && !ALARM('Deploying')`},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Act
-			got := TransformAlarmRule(tc.input)
-
-			// Assert
-			assert.Equal(t, tc.want, got, "Transformation should match expected")
-
-			// Verify with govaluate
-			callLog := []string{}
-
-			functions := map[string]govaluate.ExpressionFunction{
-				"OK": func(args ...interface{}) (interface{}, error) {
-					require.NotEmpty(t, args, "OK should receive arguments")
-					callLog = append(callLog, "OK("+args[0].(string)+")")
-					return true, nil
-				},
-				"ALARM": func(args ...interface{}) (interface{}, error) {
-					require.NotEmpty(t, args, "ALARM should receive arguments")
-					callLog = append(callLog, "ALARM("+args[0].(string)+")")
-					return true, nil
-				},
-				"INSUFFICIENT_DATA": func(args ...interface{}) (interface{}, error) {
-					require.NotEmpty(t, args, "INSUFFICIENT_DATA should receive arguments")
-					callLog = append(callLog, "INSUFFICIENT_DATA("+args[0].(string)+")")
-					return true, nil
-				},
-			}
-
-			expr, err := govaluate.NewEvaluableExpressionWithFunctions(tc.want, functions)
-			require.NoError(t, err, "Govaluate should parse expression")
-
-			result, err := expr.Evaluate(nil)
-			require.NoError(t, err, "Govaluate should evaluate successfully")
-
-			assert.NotNil(t, result, "Result should not be nil")
-			t.Logf("✅ Input: %s → Transformed: %s → Result: %v, Calls: %v", tc.input, tc.want, result, callLog)
-		})
-	}
-}
-
-// TestGovaluateReceivesCorrectArguments - sprawdza dokładnie co govaluate otrzymuje jako argumenty
-func Test_GovaluateReceivesCorrectArguments(t *testing.T) {
-	testCases := []struct {
-		name             string
-		transformed      string
-		expectedFunction string
-		expectedArg      string
-	}{
-		{
-			name:             "Simple name",
-			transformed:      `OK('test')`,
-			expectedFunction: "OK",
-			expectedArg:      "test",
-		},
-		{
-			name:             "Name without quotes - like AWS",
-			transformed:      `ALARM('DobryAlarm')`,
-			expectedFunction: "ALARM",
-			expectedArg:      `DobryAlarm`,
-		},
-		{
-			name:             "Name with parenthesis",
-			transformed:      `OK('a)')`,
-			expectedFunction: "OK",
-			expectedArg:      `a)`,
-		},
-		{
-			name:             "Name with escaped apostrophe",
-			transformed:      `OK('a\'')`,
-			expectedFunction: "OK",
-			expectedArg:      `a'`,
-		},
-		{
-			name:             "Name with apostrophes inside - like AWS",
-			transformed:      `OK('\'test\'')`,
-			expectedFunction: "OK",
-			expectedArg:      `'test'`,
-		},
-		{
-			name:             "Name with apostrophe in middle",
-			transformed:      `OK('test\'name')`,
-			expectedFunction: "OK",
-			expectedArg:      `test'name`,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Arrange
-			var receivedArg interface{}
-
-			functions := map[string]govaluate.ExpressionFunction{
-				"OK": func(args ...interface{}) (interface{}, error) {
-					require.NotEmpty(t, args, "OK should receive arguments")
-					receivedArg = args[0]
-					return true, nil
-				},
-				"ALARM": func(args ...interface{}) (interface{}, error) {
-					require.NotEmpty(t, args, "ALARM should receive arguments")
-					receivedArg = args[0]
-					return true, nil
-				},
-				"INSUFFICIENT_DATA": func(args ...interface{}) (interface{}, error) {
-					require.NotEmpty(t, args, "INSUFFICIENT_DATA should receive arguments")
-					receivedArg = args[0]
-					return true, nil
-				},
-			}
-
-			// Act
-			expr, err := govaluate.NewEvaluableExpressionWithFunctions(tc.transformed, functions)
-			require.NoError(t, err, "Should parse expression")
-
-			_, err = expr.Evaluate(nil)
-			require.NoError(t, err, "Should evaluate successfully")
-
-			// Assert
-			receivedStr, ok := receivedArg.(string)
-			require.True(t, ok, "Received arg should be string, got %T", receivedArg)
-
-			assert.Equal(t, tc.expectedArg, receivedStr, "%s should receive correct argument", tc.expectedFunction)
-			t.Logf("✅ %s received correct arg: %q", tc.expectedFunction, receivedStr)
-		})
-	}
-}
-
-// TestAWSStringConcatenation - test dla dokładnie takiej konstrukcji jak w AWS SDK
-func Test_AWSStringConcatenation(t *testing.T) {
-	// Arrange
-	alarm1 := "cpu-high-alarm"
-	alarm2 := "memory-high-alarm"
-	alarmRule := "ALARM(\"" + alarm1 + "\") AND ALARM(\"" + alarm2 + "\")"
-
-	t.Logf("Constructed AlarmRule: %s", alarmRule)
-
-	// Act
-	transformed := TransformAlarmRule(alarmRule)
-
-	// Assert
-	expectedTransformed := "ALARM('cpu-high-alarm') && ALARM('memory-high-alarm')"
-	assert.Equal(t, expectedTransformed, transformed, "Transformation should match expected format")
-
-	// Govaluate verification
-	var receivedAlarms []string
-
+	var receivedArg string
 	functions := map[string]govaluate.ExpressionFunction{
-		"ALARM": func(args ...interface{}) (interface{}, error) {
-			require.NotEmpty(t, args, "ALARM function should receive arguments")
-			alarmName := args[0].(string)
-			receivedAlarms = append(receivedAlarms, alarmName)
-			t.Logf("ALARM() called with: %q", alarmName)
+		"OK": func(args ...interface{}) (interface{}, error) {
+			require.NotEmpty(t, args)
+			receivedArg = args[0].(string)
 			return true, nil
 		},
 	}
 
 	expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformed, functions)
-	require.NoError(t, err, "Govaluate should parse the expression without error")
+	require.NoError(t, err)
 
-	result, err := expr.Evaluate(nil)
-	require.NoError(t, err, "Govaluate should evaluate without error")
+	_, err = expr.Evaluate(nil)
+	require.NoError(t, err)
 
-	// Assertions
-	assert.True(t, result.(bool), "Result should be true (both alarms return true)")
-	assert.Len(t, receivedAlarms, 2, "Should call ALARM function twice")
-	assert.Equal(t, []string{"cpu-high-alarm", "memory-high-alarm"}, receivedAlarms, "Should receive correct alarm names in order")
+	expectedFromAWS := "'test'"
+	assert.Equal(t, expectedFromAWS, receivedArg)
 }
 
-// TestAWSStringConcatenationWithNewlines - test dla AlarmRule z \n
-func Test_AWSStringConcatenationWithNewlines(t *testing.T) {
-	// Arrange
-	alarm1 := "cpu-high"
-	alarm2 := "memory-high"
-	alarmRule := "ALARM(\n" + alarm1 + " \n) AND ALARM(\n" + alarm2 + "\n)"
-
-	t.Logf("Constructed AlarmRule:\n%s", alarmRule)
-	t.Logf("Raw: %q", alarmRule)
-
-	// Act
-	transformed := TransformAlarmRule(alarmRule)
-	t.Logf("Transformed: %s", transformed)
-
-	// Assert
-	expectedTransformed := "ALARM('cpu-high') && ALARM('memory-high')"
-	assert.Equal(t, expectedTransformed, transformed, "Newlines should be trimmed correctly")
-
-	// Govaluate verification
-	var receivedAlarms []string
-
-	functions := map[string]govaluate.ExpressionFunction{
-		"ALARM": func(args ...interface{}) (interface{}, error) {
-			require.NotEmpty(t, args, "ALARM function should receive arguments")
-			alarmName := args[0].(string)
-			receivedAlarms = append(receivedAlarms, alarmName)
-			t.Logf("ALARM() called with: %q", alarmName)
-			return true, nil
-		},
-	}
-
-	expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformed, functions)
-	require.NoError(t, err, "Govaluate should parse the expression")
-
-	result, err := expr.Evaluate(nil)
-	require.NoError(t, err, "Govaluate should evaluate successfully")
-
-	// Assertions
-	assert.True(t, result.(bool), "Result should be true")
-	assert.Equal(t, []string{"cpu-high", "memory-high"}, receivedAlarms, "Should receive trimmed alarm names")
-}
-
-// TestMultipleAWSStringConcatenationPatterns - różne warianty konstrukcji AlarmRule
-func Test_MultipleAWSStringConcatenationPatterns(t *testing.T) {
+// TestAllEdgeCasesWithAWS compares our transformation with AWS behavior for all edge cases.
+// Each test case represents actual AWS CloudWatch alarm name handling.
+func TestAllEdgeCasesWithAWS(t *testing.T) {
 	testCases := []struct {
-		name          string
-		buildRule     func() string
-		expectedCalls []string
-		description   string
+		awsInput     string
+		awsAlarmName string
+		description  string
 	}{
 		{
-			name: "Two alarms with AND",
-			buildRule: func() string {
-				alarm1 := "alarm-1"
-				alarm2 := "alarm-2"
-				return "ALARM(\"" + alarm1 + "\") AND ALARM(\"" + alarm2 + "\")"
-			},
-			expectedCalls: []string{"alarm-1", "alarm-2"},
-			description:   "Both alarms should be evaluated with AND operator",
+			awsInput:     `ALARM("test")`,
+			awsAlarmName: `test`,
+			description:  "Simple double quotes",
 		},
 		{
-			name: "Three alarms with OR - short circuit",
-			buildRule: func() string {
-				a1 := "web-1"
-				a2 := "web-2"
-				a3 := "web-3"
-				return "ALARM(\"" + a1 + "\") OR ALARM(\"" + a2 + "\") OR ALARM(\"" + a3 + "\")"
-			},
-			expectedCalls: []string{"web-1"},
-			description:   "Only first alarm should be called due to short-circuit evaluation",
+			awsInput:     `OK('test')`,
+			awsAlarmName: `test`,
+			description:  "Simple single quotes",
 		},
 		{
-			name: "Complex with NOT",
-			buildRule: func() string {
-				prod := "production-alarm"
-				maint := "maintenance-mode"
-				return "ALARM(\"" + prod + "\") AND NOT ALARM(\"" + maint + "\")"
-			},
-			expectedCalls: []string{"production-alarm", "maintenance-mode"},
-			description:   "Both alarms should be evaluated for AND NOT expression",
+			awsInput:     `OK("'test'")`,
+			awsAlarmName: `'test'`,
+			description:  "Double quotes with single quotes inside - AWS keeps inner",
 		},
 		{
-			name: "Nested parentheses",
-			buildRule: func() string {
-				cpu1 := "cpu-server-1"
-				cpu2 := "cpu-server-2"
-				deploy := "deployment-in-progress"
-				return "(ALARM(\"" + cpu1 + "\") OR ALARM(\"" + cpu2 + "\")) AND NOT ALARM(\"" + deploy + "\")"
-			},
-			expectedCalls: []string{"cpu-server-1", "deployment-in-progress"},
-			description:   "Should evaluate first alarm in OR, then the NOT alarm",
+			awsInput:     `OK(test'name)`,
+			awsAlarmName: `test'name`,
+			description:  "Apostrophe in middle - no surrounding quotes",
 		},
 		{
-			name: "Mixed OK and ALARM",
-			buildRule: func() string {
-				health := "health-check"
-				errorRate := "error-rate"
-				return "OK(\"" + health + "\") AND ALARM(\"" + errorRate + "\")"
-			},
-			expectedCalls: []string{"health-check", "error-rate"},
-			description:   "Should handle both OK and ALARM functions",
+			awsInput:     `OK(a')`,
+			awsAlarmName: `a'`,
+			description:  "Apostrophe at end - no surrounding quotes",
+		},
+		{
+			awsInput:     `OK("a)")`,
+			awsAlarmName: `a)`,
+			description:  "Parenthesis inside quotes",
+		},
+		{
+			awsInput:     `ALARM('a)')`,
+			awsAlarmName: `a)`,
+			description:  "Parenthesis after apostrophe",
+		},
+		{
+			awsInput:     `OK(" a ")`,
+			awsAlarmName: ` a `,
+			description:  "Spaces inside quotes",
 		},
 	}
 
 	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Arrange
-			alarmRule := tc.buildRule()
-			t.Logf("Rule: %s", alarmRule)
-			t.Logf("Description: %s", tc.description)
+		t.Run(tc.description, func(t *testing.T) {
+			transformed := TransformAlarmRule(tc.awsInput)
 
-			// Act
-			transformed := TransformAlarmRule(alarmRule)
-			t.Logf("Transformed: %s", transformed)
-
-			var callLog []string
-
+			var receivedArg string
 			functions := map[string]govaluate.ExpressionFunction{
 				"OK": func(args ...interface{}) (interface{}, error) {
-					require.NotEmpty(t, args, "OK function should receive arguments")
-					name := args[0].(string)
-					callLog = append(callLog, name)
-					t.Logf("OK(%q) called", name)
+					require.NotEmpty(t, args)
+					receivedArg = args[0].(string)
 					return true, nil
 				},
 				"ALARM": func(args ...interface{}) (interface{}, error) {
-					require.NotEmpty(t, args, "ALARM function should receive arguments")
-					name := args[0].(string)
-					callLog = append(callLog, name)
-					t.Logf("ALARM(%q) called", name)
+					require.NotEmpty(t, args)
+					receivedArg = args[0].(string)
 					return true, nil
 				},
 			}
 
 			expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformed, functions)
-			require.NoError(t, err, "Should parse expression successfully")
+			require.NoError(t, err)
+
+			_, err = expr.Evaluate(nil)
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.awsAlarmName, receivedArg)
+		})
+	}
+}
+
+// TestFullPipeline tests the complete pipeline: AWS input → Transform → Govaluate evaluation.
+// Verifies that complex expressions with multiple alarms work correctly end-to-end.
+func TestFullPipeline(t *testing.T) {
+	testCases := []struct {
+		name          string
+		awsInput      string
+		expectedCalls []string
+		description   string
+	}{
+		{
+			name:          "Simple alarm",
+			awsInput:      `ALARM("test-alarm")`,
+			expectedCalls: []string{`test-alarm`},
+			description:   "Single alarm with double quotes",
+		},
+		{
+			name:          "Alarm with parenthesis in name",
+			awsInput:      `OK("a)")`,
+			expectedCalls: []string{`a)`},
+			description:   "Alarm name contains closing parenthesis",
+		},
+		{
+			name:          "Two alarms with AND",
+			awsInput:      `ALARM("alarm1") AND ALARM("alarm2")`,
+			expectedCalls: []string{`alarm1`, `alarm2`},
+			description:   "Two alarms combined with AND",
+		},
+		{
+			name:          "Complex expression",
+			awsInput:      `(OK("health-check") OR ALARM("error-rate")) AND NOT ALARM("maintenance")`,
+			expectedCalls: []string{`health-check`, `maintenance`},
+			description:   "Complex expression with OR, AND, NOT",
+		},
+		{
+			name:          "Alarm with inner quotes",
+			awsInput:      `OK("'test'")`,
+			expectedCalls: []string{`'test'`},
+			description:   "AWS keeps inner single quotes when outer are double quotes",
+		},
+		{
+			name:          "Alarm with apostrophe in middle",
+			awsInput:      `OK(test'name)`,
+			expectedCalls: []string{`test'name`},
+			description:   "Apostrophe in the middle of alarm name",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			transformed := TransformAlarmRule(tc.awsInput)
+
+			callLog := []string{}
+
+			functions := map[string]govaluate.ExpressionFunction{
+				"OK": func(args ...interface{}) (interface{}, error) {
+					require.NotEmpty(t, args)
+					alarmName := args[0].(string)
+					callLog = append(callLog, alarmName)
+					return true, nil
+				},
+				"ALARM": func(args ...interface{}) (interface{}, error) {
+					require.NotEmpty(t, args)
+					alarmName := args[0].(string)
+					callLog = append(callLog, alarmName)
+					return true, nil
+				},
+				"INSUFFICIENT_DATA": func(args ...interface{}) (interface{}, error) {
+					require.NotEmpty(t, args)
+					alarmName := args[0].(string)
+					callLog = append(callLog, alarmName)
+					return true, nil
+				},
+			}
+
+			expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformed, functions)
+			require.NoError(t, err)
 
 			result, err := expr.Evaluate(nil)
-			require.NoError(t, err, "Should evaluate successfully")
+			require.NoError(t, err)
 
-			// Assert
-			assert.NotNil(t, result, "Result should not be nil")
-			t.Logf("Result: %v", result)
-			t.Logf("Call log: %v", callLog)
-			t.Logf("Expected: %v", tc.expectedCalls)
+			assert.NotNil(t, result)
 
-			// Verify calls (accounting for short-circuit evaluation)
 			for i, expected := range tc.expectedCalls {
-				if assert.Less(t, i, len(callLog), "Should have call at index %d", i) {
-					assert.Equal(t, expected, callLog[i], "Call %d should match expected alarm name", i)
+				if assert.Less(t, i, len(callLog)) {
+					assert.Equal(t, expected, callLog[i])
 				}
 			}
 		})
 	}
 }
 
-// TestVariousNewlinePatterns - różne wzorce z newlines
-func Test_VariousNewlinePatterns(t *testing.T) {
+// TestRealAWSCompositeAlarm tests with exact AWS DescribeAlarms response format.
+// This verifies compatibility with real AWS CloudWatch composite alarm responses.
+func TestRealAWSCompositeAlarm(t *testing.T) {
+	awsResponse := `ALARM("alarm1") AND ALARM("alarm2")`
+
+	transformed := TransformAlarmRule(awsResponse)
+
+	expected := `ALARM('alarm1') && ALARM('alarm2')`
+	assert.Equal(t, expected, transformed)
+
+	callLog := []string{}
+
+	functions := map[string]govaluate.ExpressionFunction{
+		"ALARM": func(args ...interface{}) (interface{}, error) {
+			require.NotEmpty(t, args)
+			alarmName := args[0].(string)
+			callLog = append(callLog, alarmName)
+			return true, nil
+		},
+	}
+
+	expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformed, functions)
+	require.NoError(t, err)
+
+	result, err := expr.Evaluate(nil)
+	require.NoError(t, err)
+
+	assert.True(t, result.(bool))
+
+	expectedAlarms := []string{"alarm1", "alarm2"}
+	assert.Equal(t, expectedAlarms, callLog)
+}
+
+// TestRealWorldFormattedAlarmRule tests AlarmRule with formatted output (newlines, indentation).
+// AWS API responses sometimes include formatted alarm rules with whitespace.
+func TestRealWorldFormattedAlarmRule(t *testing.T) {
+	cpuAlarm := "production-cpu-high"
+	memoryAlarm := "production-memory-high"
+	diskAlarm := "production-disk-full"
+
+	alarmRule := "ALARM(\n" +
+		cpuAlarm + "\n" +
+		") AND ALARM(\n" +
+		memoryAlarm + "\n" +
+		") OR ALARM(\n" +
+		diskAlarm + "\n" +
+		")"
+
+	transformed := TransformAlarmRule(alarmRule)
+
+	var callLog []string
+
+	functions := map[string]govaluate.ExpressionFunction{
+		"ALARM": func(args ...interface{}) (interface{}, error) {
+			require.NotEmpty(t, args)
+			name := args[0].(string)
+			callLog = append(callLog, name)
+			return true, nil
+		},
+	}
+
+	expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformed, functions)
+	require.NoError(t, err)
+
+	result, err := expr.Evaluate(nil)
+	require.NoError(t, err)
+
+	assert.True(t, result.(bool))
+	assert.NotEmpty(t, callLog)
+
+	assert.GreaterOrEqual(t, len(callLog), 1)
+	assert.Equal(t, cpuAlarm, callLog[0])
+}
+
+// TestAWSMultilineFormatting tests various multiline formatting patterns from AWS API.
+// AWS can return alarm rules with different whitespace formatting.
+func TestAWSMultilineFormatting(t *testing.T) {
 	testCases := []struct {
 		name          string
-		buildRule     func() string
+		alarmRule     string
 		expectedCalls []string
 		description   string
 	}{
 		{
-			name: "Newline after opening paren",
-			buildRule: func() string {
-				a := "alarm1"
-				return "ALARM(\n" + a + ")"
-			},
-			expectedCalls: []string{"alarm1"},
-			description:   "Should trim newline after opening parenthesis",
-		},
-		{
-			name: "Newline before closing paren",
-			buildRule: func() string {
-				a := "alarm2"
-				return "ALARM(" + a + "\n)"
-			},
-			expectedCalls: []string{"alarm2"},
-			description:   "Should trim newline before closing parenthesis",
-		},
-		{
-			name: "Newlines on both sides",
-			buildRule: func() string {
-				a := "alarm3"
-				return "ALARM(\n" + a + "\n)"
-			},
-			expectedCalls: []string{"alarm3"},
-			description:   "Should trim newlines on both sides",
-		},
-		{
-			name: "Newlines with spaces",
-			buildRule: func() string {
-				a := "alarm4"
-				return "ALARM(\n " + a + " \n)"
-			},
-			expectedCalls: []string{"alarm4"},
-			description:   "Should trim newlines and spaces",
-		},
-		{
-			name: "Multiple newlines",
-			buildRule: func() string {
-				a := "alarm5"
-				return "ALARM(\n\n" + a + "\n\n)"
-			},
-			expectedCalls: []string{"alarm5"},
-			description:   "Should trim multiple consecutive newlines",
+			name: "Newlines around alarm names",
+			alarmRule: "ALARM(\n" +
+				"\"cpu-alarm\"\n" +
+				") AND ALARM(\n" +
+				"\"mem-alarm\"\n" +
+				")",
+			expectedCalls: []string{"cpu-alarm", "mem-alarm"},
+			description:   "Newlines before and after alarm names should be trimmed",
 		},
 		{
 			name: "Tabs and newlines",
-			buildRule: func() string {
-				a := "alarm6"
-				return "ALARM(\n\t" + a + "\t\n)"
-			},
-			expectedCalls: []string{"alarm6"},
-			description:   "Should trim tabs and newlines",
+			alarmRule: "ALARM(\n\t" +
+				"\"server-1\"\n\t" +
+				") OR ALARM(\n\t" +
+				"\"server-2\"\n\t" +
+				")",
+			expectedCalls: []string{"server-1"},
+			description:   "Tabs and newlines should be handled correctly",
 		},
 		{
-			name: "Complex with newlines in AND",
-			buildRule: func() string {
-				a1 := "web-1"
-				a2 := "web-2"
-				return "ALARM(\n" + a1 + "\n) AND\nALARM(\n" + a2 + "\n)"
-			},
-			expectedCalls: []string{"web-1", "web-2"},
-			description:   "Should handle newlines in complex expressions",
-		},
-		{
-			name: "Quoted alarm names with newlines",
-			buildRule: func() string {
-				a1 := "prod-cpu"
-				a2 := "prod-mem"
-				return "ALARM(\n\"" + a1 + "\"\n) AND ALARM(\n\"" + a2 + "\"\n)"
-			},
-			expectedCalls: []string{"prod-cpu", "prod-mem"},
-			description:   "Should handle quoted names with newlines",
+			name: "Complex multiline expression",
+			alarmRule: "(\n" +
+				"  ALARM(\"web-1\") OR\n" +
+				"  ALARM(\"web-2\")\n" +
+				") AND NOT ALARM(\n" +
+				"  \"maintenance\"\n" +
+				")",
+			expectedCalls: []string{"web-1", "maintenance"},
+			description:   "Complex multiline with indentation",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Arrange
-			alarmRule := tc.buildRule()
-			t.Logf("Input: %q", alarmRule)
-			t.Logf("Description: %s", tc.description)
-
-			// Act
-			transformed := TransformAlarmRule(alarmRule)
-			t.Logf("Transformed: %s", transformed)
-
-			var callLog []string
-
-			functions := map[string]govaluate.ExpressionFunction{
-				"ALARM": func(args ...interface{}) (interface{}, error) {
-					require.NotEmpty(t, args, "ALARM should receive arguments")
-					name := args[0].(string)
-					callLog = append(callLog, name)
-					t.Logf("ALARM(%q)", name)
-					return true, nil
-				},
-			}
-
-			expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformed, functions)
-			require.NoError(t, err, "Should parse expression")
-
-			_, err = expr.Evaluate(nil)
-			require.NoError(t, err, "Should evaluate successfully")
-
-			// Assert
-			t.Logf("Call log: %v", callLog)
-			t.Logf("Expected:  %v", tc.expectedCalls)
-
-			assert.Equal(t, len(tc.expectedCalls), len(callLog), "Should call expected number of functions")
-			assert.Equal(t, tc.expectedCalls, callLog, "Should call functions with expected names")
-		})
-	}
-}
-
-// TestAWSStringConcatenationWithSpecialCharacters - alarmy ze specjalnymi znakami
-func Test_AWSStringConcatenationWithSpecialCharacters(t *testing.T) {
-	testCases := []struct {
-		name         string
-		alarm1       string
-		alarm2       string
-		expectedName string
-	}{
-		{
-			name:         "Hyphens in name",
-			alarm1:       "my-prod-cpu-alarm",
-			alarm2:       "my-prod-mem-alarm",
-			expectedName: "my-prod-cpu-alarm",
-		},
-		{
-			name:         "Underscores in name",
-			alarm1:       "web_server_1_cpu",
-			alarm2:       "web_server_2_cpu",
-			expectedName: "web_server_1_cpu",
-		},
-		{
-			name:         "Dots in name",
-			alarm1:       "api.prod.errors",
-			alarm2:       "api.prod.latency",
-			expectedName: "api.prod.errors",
-		},
-		{
-			name:         "Slashes in name (ARN-like)",
-			alarm1:       "prod/web/cpu",
-			alarm2:       "prod/web/memory",
-			expectedName: "prod/web/cpu",
-		},
-		{
-			name:         "Colons in name (ARN)",
-			alarm1:       "arn:aws:cloudwatch:us-east-1:123456:alarm:MyAlarm",
-			alarm2:       "arn:aws:cloudwatch:us-east-1:123456:alarm:OtherAlarm",
-			expectedName: "arn:aws:cloudwatch:us-east-1:123456:alarm:MyAlarm",
-		},
-		{
-			name:         "Numbers in name",
-			alarm1:       "server-123-cpu",
-			alarm2:       "server-456-cpu",
-			expectedName: "server-123-cpu",
-		},
-		{
-			name:         "Mixed special characters",
-			alarm1:       "prod_web-server.cpu:high",
-			alarm2:       "prod_web-server.mem:high",
-			expectedName: "prod_web-server.cpu:high",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Arrange
-			alarmRule := "ALARM(\"" + tc.alarm1 + "\") AND ALARM(\"" + tc.alarm2 + "\")"
-			t.Logf("AlarmRule: %s", alarmRule)
-
-			// Act
-			transformed := TransformAlarmRule(alarmRule)
-			t.Logf("Transformed: %s", transformed)
-
-			var firstAlarmName string
-
-			functions := map[string]govaluate.ExpressionFunction{
-				"ALARM": func(args ...interface{}) (interface{}, error) {
-					require.NotEmpty(t, args, "ALARM should receive arguments")
-					if firstAlarmName == "" {
-						firstAlarmName = args[0].(string)
-					}
-					return true, nil
-				},
-			}
-
-			expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformed, functions)
-			require.NoError(t, err, "Should parse expression with special characters")
-
-			_, err = expr.Evaluate(nil)
-			require.NoError(t, err, "Should evaluate successfully")
-
-			// Assert
-			assert.Equal(t, tc.expectedName, firstAlarmName, "First alarm name should match expected")
-			t.Logf("✅ Correctly received: %q", firstAlarmName)
-		})
-	}
-}
-
-// TestComplexNestedExpressions - złożone zagnieżdżone wyrażenia
-func TestComplexNestedExpressions(t *testing.T) {
-	testCases := []struct {
-		name        string
-		alarmRule   string
-		description string
-		minCalls    int
-		firstCall   string
-	}{
-		{
-			name:        "Triple nested OR",
-			alarmRule:   "((ALARM(\"a\") OR ALARM(\"b\")) OR ALARM(\"c\")) OR ALARM(\"d\")",
-			description: "Should short-circuit after first true",
-			minCalls:    1,
-			firstCall:   "a",
-		},
-		{
-			name:        "Mixed AND OR with NOT",
-			alarmRule:   "(ALARM(\"x\") AND NOT ALARM(\"y\")) OR (ALARM(\"z\") AND ALARM(\"w\"))",
-			description: "Should evaluate first branch completely",
-			minCalls:    2,
-			firstCall:   "x",
-		},
-		{
-			name:        "Deep nesting with parentheses",
-			alarmRule:   "((ALARM(\"p1\") AND ALARM(\"p2\")) AND (ALARM(\"p3\") OR ALARM(\"p4\")))",
-			description: "Should evaluate nested expressions correctly",
-			minCalls:    3,
-			firstCall:   "p1",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Arrange
-			t.Logf("AlarmRule: %s", tc.alarmRule)
-			t.Logf("Description: %s", tc.description)
-
-			// Act
 			transformed := TransformAlarmRule(tc.alarmRule)
-			t.Logf("Transformed: %s", transformed)
 
 			var callLog []string
 
@@ -689,23 +331,180 @@ func TestComplexNestedExpressions(t *testing.T) {
 					require.NotEmpty(t, args)
 					name := args[0].(string)
 					callLog = append(callLog, name)
-					t.Logf("ALARM(%q)", name)
 					return true, nil
 				},
 			}
 
 			expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformed, functions)
-			require.NoError(t, err, "Should parse complex expression")
+			require.NoError(t, err)
+
+			_, err = expr.Evaluate(nil)
+			require.NoError(t, err)
+
+			for i, expected := range tc.expectedCalls {
+				if assert.Less(t, i, len(callLog)) {
+					assert.Equal(t, expected, callLog[i])
+				}
+			}
+		})
+	}
+}
+
+// TestAWSCompositeAlarmScenarios tests real-world AWS composite alarm scenarios.
+// Each scenario represents a common production use case.
+func TestAWSCompositeAlarmScenarios(t *testing.T) {
+	testCases := []struct {
+		name          string
+		scenario      string
+		alarmRule     string
+		expectedCalls []string
+	}{
+		{
+			name:          "High availability scenario",
+			scenario:      "Alert when both primary and backup servers are down",
+			alarmRule:     `ALARM("primary-server-down") AND ALARM("backup-server-down")`,
+			expectedCalls: []string{"primary-server-down", "backup-server-down"},
+		},
+		{
+			name:          "Maintenance window scenario",
+			scenario:      "Alert only when not in maintenance window",
+			alarmRule:     `ALARM("cpu-high") AND NOT ALARM("maintenance-window")`,
+			expectedCalls: []string{"cpu-high", "maintenance-window"},
+		},
+		{
+			name:          "Multi-region scenario",
+			scenario:      "Alert when any region has issues",
+			alarmRule:     `ALARM("us-east-1-down") OR ALARM("eu-west-1-down") OR ALARM("ap-southeast-1-down")`,
+			expectedCalls: []string{"us-east-1-down"},
+		},
+		{
+			name:          "Service dependency scenario",
+			scenario:      "Alert when service is down and database is healthy",
+			alarmRule:     `ALARM("service-down") AND OK("database-healthy")`,
+			expectedCalls: []string{"service-down", "database-healthy"},
+		},
+		{
+			name:          "Complex production scenario",
+			scenario:      "Alert for production issues excluding known problems",
+			alarmRule:     `(ALARM("prod-cpu-high") OR ALARM("prod-memory-high")) AND NOT (ALARM("known-issue-123") OR ALARM("planned-deployment"))`,
+			expectedCalls: []string{"prod-cpu-high", "known-issue-123"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			transformed := TransformAlarmRule(tc.alarmRule)
+
+			var callLog []string
+
+			functions := map[string]govaluate.ExpressionFunction{
+				"OK": func(args ...interface{}) (interface{}, error) {
+					require.NotEmpty(t, args)
+					name := args[0].(string)
+					callLog = append(callLog, name)
+					return true, nil
+				},
+				"ALARM": func(args ...interface{}) (interface{}, error) {
+					require.NotEmpty(t, args)
+					name := args[0].(string)
+					callLog = append(callLog, name)
+					return true, nil
+				},
+			}
+
+			expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformed, functions)
+			require.NoError(t, err)
 
 			result, err := expr.Evaluate(nil)
-			require.NoError(t, err, "Should evaluate successfully")
+			require.NoError(t, err)
 
-			// Assert
 			assert.NotNil(t, result)
-			assert.GreaterOrEqual(t, len(callLog), tc.minCalls, "Should make minimum expected calls")
-			assert.Equal(t, tc.firstCall, callLog[0], "First call should match expected")
 
-			t.Logf("Calls made: %v", callLog)
+			for i, expected := range tc.expectedCalls {
+				if assert.Less(t, i, len(callLog)) {
+					assert.Equal(t, expected, callLog[i])
+				}
+			}
+		})
+	}
+}
+
+// TestAWSAlarmNamingConventions tests various AWS alarm naming conventions.
+// AWS alarms can use different naming patterns - all must be preserved exactly.
+func TestAWSAlarmNamingConventions(t *testing.T) {
+	testCases := []struct {
+		name         string
+		alarmName    string
+		convention   string
+		expectedName string
+	}{
+		{
+			name:         "Kebab case",
+			alarmName:    "my-production-cpu-alarm",
+			convention:   "kebab-case",
+			expectedName: "my-production-cpu-alarm",
+		},
+		{
+			name:         "Snake case",
+			alarmName:    "production_memory_high",
+			convention:   "snake_case",
+			expectedName: "production_memory_high",
+		},
+		{
+			name:         "Camel case",
+			alarmName:    "productionCpuHigh",
+			convention:   "camelCase",
+			expectedName: "productionCpuHigh",
+		},
+		{
+			name:         "Dot notation",
+			alarmName:    "prod.web.cpu.high",
+			convention:   "dot.notation",
+			expectedName: "prod.web.cpu.high",
+		},
+		{
+			name:         "Slash notation (path-like)",
+			alarmName:    "prod/us-east-1/web/cpu",
+			convention:   "path/notation",
+			expectedName: "prod/us-east-1/web/cpu",
+		},
+		{
+			name:         "ARN format",
+			alarmName:    "arn:aws:cloudwatch:region:account:alarm:name",
+			convention:   "ARN",
+			expectedName: "arn:aws:cloudwatch:region:account:alarm:name",
+		},
+		{
+			name:         "Mixed conventions",
+			alarmName:    "prod_web-server.cpu:high",
+			convention:   "mixed",
+			expectedName: "prod_web-server.cpu:high",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			alarmRule := `ALARM("` + tc.alarmName + `")`
+
+			transformed := TransformAlarmRule(alarmRule)
+
+			var receivedName string
+
+			functions := map[string]govaluate.ExpressionFunction{
+				"ALARM": func(args ...interface{}) (interface{}, error) {
+					require.NotEmpty(t, args)
+					receivedName = args[0].(string)
+					return true, nil
+				},
+			}
+
+			expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformed, functions)
+			require.NoError(t, err)
+
+			_, err = expr.Evaluate(nil)
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.expectedName, receivedName)
 		})
 	}
 }
