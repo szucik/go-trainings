@@ -167,10 +167,19 @@ const (
 // parseExpectedStates extracts expected states from the rule.
 // It parses the transformed rule to determine what state each alarm should be in
 // for the composite to be OK.
+//
+// Examples:
+//   - OK('m1') → m1 should be OK
+//   - ALARM('cpu') → cpu should NOT be ALARM (for composite OK)
+//   - !ALARM('maint') → maint should NOT be ALARM
+//   - INSUFFICIENT_DATA('metric') → metric should be INSUFFICIENT_DATA
+//   - !INSUFFICIENT_DATA('net') → net should NOT be INSUFFICIENT_DATA
 func parseExpectedStates(transformedRule string) map[string]ExpectedState {
 	expectedStates := make(map[string]ExpectedState)
 
-	// Pattern: OK('alarm_name')
+	// ════════════════════════════════════════════════════════════
+	// Pattern 1: OK('alarm_name')
+	// ════════════════════════════════════════════════════════════
 	reOK := regexp.MustCompile(`OK\('([^']+)'\)`)
 	matchesOK := reOK.FindAllStringSubmatch(transformedRule, -1)
 	for _, match := range matchesOK {
@@ -180,34 +189,44 @@ func parseExpectedStates(transformedRule string) map[string]ExpectedState {
 		}
 	}
 
-	// Pattern: ALARM('alarm_name')
-	reAlarm := regexp.MustCompile(`ALARM\('([^']+)'\)`)
+	// ════════════════════════════════════════════════════════════
+	// Pattern 2: ALARM('alarm_name') or !ALARM('alarm_name')
+	// ════════════════════════════════════════════════════════════
+	reAlarm := regexp.MustCompile(`!?ALARM\('([^']+)'\)`)
 	matchesAlarm := reAlarm.FindAllStringSubmatch(transformedRule, -1)
 	for _, match := range matchesAlarm {
 		if len(match) > 1 {
 			alarmName := match[1]
-			// Check if it's negated
-			idx := strings.Index(transformedRule, match[0])
-			if idx > 0 && transformedRule[idx-1] == '!' {
+
+			// Find the full match in the rule to check for negation
+			fullMatch := match[0]
+			if strings.HasPrefix(fullMatch, "!") {
+				// !ALARM(x) → x should NOT be ALARM
 				expectedStates[alarmName] = ExpectedNotAlarm
 			} else {
-				// For OK composite state, ALARM(x) in rule means x should NOT be ALARM
+				// ALARM(x) in rule when composite is OK means x is NOT ALARM
+				// (because if it were ALARM, composite would be ALARM)
 				expectedStates[alarmName] = ExpectedNotAlarm
 			}
 		}
 	}
 
-	// Pattern: INSUFFICIENT_DATA('alarm_name')
-	reInsufficient := regexp.MustCompile(`INSUFFICIENT_DATA\('([^']+)'\)`)
+	// ════════════════════════════════════════════════════════════
+	// Pattern 3: INSUFFICIENT_DATA('alarm_name') or !INSUFFICIENT_DATA('alarm_name')
+	// ════════════════════════════════════════════════════════════
+	reInsufficient := regexp.MustCompile(`!?INSUFFICIENT_DATA\('([^']+)'\)`)
 	matchesInsufficient := reInsufficient.FindAllStringSubmatch(transformedRule, -1)
 	for _, match := range matchesInsufficient {
 		if len(match) > 1 {
 			alarmName := match[1]
-			// Check if it's negated
-			idx := strings.Index(transformedRule, match[0])
-			if idx > 0 && transformedRule[idx-1] == '!' {
+
+			// Find the full match in the rule to check for negation
+			fullMatch := match[0]
+			if strings.HasPrefix(fullMatch, "!") {
+				// !INSUFFICIENT_DATA(x) → x should NOT be INSUFFICIENT_DATA
 				expectedStates[alarmName] = ExpectedNotInsufficientData
 			} else {
+				// INSUFFICIENT_DATA(x) → x should be INSUFFICIENT_DATA
 				expectedStates[alarmName] = ExpectedInsufficientData
 			}
 		}
@@ -217,6 +236,10 @@ func parseExpectedStates(transformedRule string) map[string]ExpectedState {
 }
 
 // evaluateRule evaluates the transformed alarm rule and returns true if composite should be ALARM.
+//
+// Returns:
+//   - true: composite should be in ALARM state
+//   - false: composite should be in OK state
 func evaluateRule(transformedRule string, alarmStates map[string]string) (bool, error) {
 	functions := map[string]govaluate.ExpressionFunction{
 		"ALARM": func(args ...interface{}) (interface{}, error) {
