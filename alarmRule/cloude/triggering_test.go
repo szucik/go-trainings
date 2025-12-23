@@ -33,10 +33,9 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 		childStates    map[string]AlarmStateName
 		changedAlarm   string
 		wantTriggering []string
-		description    string
 	}{
 		{
-			name:           "should return [m3] when only m3 is in ALARM with OR logic",
+			name:           "positive single alarm in ALARM state with OR logic should trigger",
 			awsRule:        "ALARM(m3) OR OK(m1) AND OK(m2)",
 			compositeState: "ALARM",
 			childStates: map[string]AlarmStateName{
@@ -46,10 +45,9 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			},
 			changedAlarm:   "m3",
 			wantTriggering: []string{"m3"},
-			description:    "Only m3 in ALARM causes composite ALARM (first condition satisfied)",
 		},
 		{
-			name:           "should return [cpu, mem] when both alarms are ALARM with AND logic",
+			name:           "positive both alarms in ALARM state with AND logic should both trigger",
 			awsRule:        "ALARM(cpu) AND ALARM(mem)",
 			compositeState: "ALARM",
 			childStates: map[string]AlarmStateName{
@@ -58,10 +56,9 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			},
 			changedAlarm:   "cpu",
 			wantTriggering: []string{"cpu", "mem"},
-			description:    "Both cpu and mem must be ALARM, so both are triggering",
 		},
 		{
-			name:           "should return [a] when only a is ALARM in complex OR expression",
+			name:           "positive one alarm in ALARM state with complex OR expression should trigger",
 			awsRule:        "(ALARM(a) OR ALARM(b)) AND NOT ALARM(maint)",
 			compositeState: "ALARM",
 			childStates: map[string]AlarmStateName{
@@ -71,10 +68,9 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			},
 			changedAlarm:   "a",
 			wantTriggering: []string{"a"},
-			description:    "a is ALARM and not in maintenance, so only a is triggering",
 		},
 		{
-			name:           "should return empty when both a and b are ALARM with OR logic",
+			name:           "negative both alarms in ALARM state with OR logic should not trigger individually",
 			awsRule:        "(ALARM(a) OR ALARM(b)) AND NOT ALARM(maint)",
 			compositeState: "ALARM",
 			childStates: map[string]AlarmStateName{
@@ -84,10 +80,9 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			},
 			changedAlarm:   "b",
 			wantTriggering: []string{},
-			description:    "Both a and b are ALARM; OR means either is sufficient, so neither individually required",
 		},
 		{
-			name:           "should return [a, b, c] when all three alarms are ALARM with AND logic",
+			name:           "positive all three alarms in ALARM state with AND logic should all trigger",
 			awsRule:        "ALARM(a) AND ALARM(b) AND ALARM(c)",
 			compositeState: "ALARM",
 			childStates: map[string]AlarmStateName{
@@ -97,10 +92,9 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			},
 			changedAlarm:   "c",
 			wantTriggering: []string{"a", "b", "c"},
-			description:    "All three must be ALARM (AND), so all are triggering",
 		},
 		{
-			name:           "should return [b] when only b is ALARM with three-way OR logic",
+			name:           "positive single alarm in ALARM state with three-way OR logic should trigger",
 			awsRule:        "ALARM(a) OR ALARM(b) OR ALARM(c)",
 			compositeState: "ALARM",
 			childStates: map[string]AlarmStateName{
@@ -110,10 +104,9 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			},
 			changedAlarm:   "b",
 			wantTriggering: []string{"b"},
-			description:    "Only b is ALARM, so only b is triggering",
 		},
 		{
-			name:           "should return [m2] when m2 is ALARM and m1 is INSUFFICIENT_DATA",
+			name:           "positive one alarm in ALARM state and other in INSUFFICIENT_DATA should trigger only ALARM",
 			awsRule:        "ALARM(m1) OR ALARM(m2)",
 			compositeState: "ALARM",
 			childStates: map[string]AlarmStateName{
@@ -122,10 +115,9 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			},
 			changedAlarm:   "m2",
 			wantTriggering: []string{"m2"},
-			description:    "m2 is ALARM (triggering), m1 is INSUFFICIENT_DATA but doesn't match ALARM()",
 		},
 		{
-			name:           "should return [cpu] when single alarm is in ALARM state",
+			name:           "positive single alarm in ALARM state should trigger",
 			awsRule:        "ALARM(cpu)",
 			compositeState: "ALARM",
 			childStates: map[string]AlarmStateName{
@@ -133,10 +125,9 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			},
 			changedAlarm:   "cpu",
 			wantTriggering: []string{"cpu"},
-			description:    "Single alarm in ALARM state",
 		},
 		{
-			name:           "should return [cpu] when cpu is ALARM and maintenance is NOT ALARM",
+			name:           "positive alarm in ALARM state with NOT condition on maintenance should trigger",
 			awsRule:        "ALARM(cpu) AND NOT ALARM(maintenance)",
 			compositeState: "ALARM",
 			childStates: map[string]AlarmStateName{
@@ -145,13 +136,12 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			},
 			changedAlarm:   "cpu",
 			wantTriggering: []string{"cpu"},
-			description:    "cpu is ALARM and maintenance is not ALARM, so cpu triggers (maintenance is negative-only)",
 		},
 		// ════════════════════════════════════════════════════════════
-		// NEW TESTS - Inverted Logic (OK triggers ALARM)
+		// Inverted Logic (OK triggers ALARM)
 		// ════════════════════════════════════════════════════════════
 		{
-			name:           "should return [m1, m2] when both are OK with AND logic (inverted)",
+			name:           "positive both alarms in OK state with AND logic (inverted) should trigger",
 			awsRule:        "OK(m1) AND OK(m2)",
 			compositeState: "ALARM",
 			childStates: map[string]AlarmStateName{
@@ -160,10 +150,9 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			},
 			changedAlarm:   "m1",
 			wantTriggering: []string{"m1", "m2"},
-			description:    "Inverted logic: both m1 AND m2 being OK causes composite ALARM",
 		},
 		{
-			name:           "should return [m1] when only m1 is OK with OR logic (inverted)",
+			name:           "positive single alarm in OK state with OR logic (inverted) should trigger",
 			awsRule:        "OK(m1) OR OK(m2)",
 			compositeState: "ALARM",
 			childStates: map[string]AlarmStateName{
@@ -172,10 +161,9 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			},
 			changedAlarm:   "m1",
 			wantTriggering: []string{"m1"},
-			description:    "Inverted logic: m1 being OK causes composite ALARM (OR satisfied)",
 		},
 		{
-			name:           "should return [health] when health is OK (inverted single alarm)",
+			name:           "positive single alarm in OK state (inverted) should trigger",
 			awsRule:        "OK(health)",
 			compositeState: "ALARM",
 			childStates: map[string]AlarmStateName{
@@ -183,10 +171,9 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			},
 			changedAlarm:   "health",
 			wantTriggering: []string{"health"},
-			description:    "Inverted logic: single alarm being OK causes composite ALARM",
 		},
 		{
-			name:           "should return [a, b, c] when all three are OK (inverted)",
+			name:           "positive all three alarms in OK state with AND logic (inverted) should trigger",
 			awsRule:        "OK(a) AND OK(b) AND OK(c)",
 			compositeState: "ALARM",
 			childStates: map[string]AlarmStateName{
@@ -196,7 +183,6 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			},
 			changedAlarm:   "a",
 			wantTriggering: []string{"a", "b", "c"},
-			description:    "Inverted logic: all three being OK causes composite ALARM",
 		},
 	}
 
@@ -205,7 +191,6 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			transformed := TransformAlarmRule(tt.awsRule)
 			states := makeChildStates(tt.childStates)
 
-			t.Logf("Description: %s", tt.description)
 			t.Logf("AWS Rule: %s", tt.awsRule)
 			t.Logf("Transformed: %s", transformed)
 			t.Logf("Changed Alarm: %s", tt.changedAlarm)
@@ -238,10 +223,9 @@ func TestGetAllTriggeringAlarms_CompositeOK(t *testing.T) {
 		childStates    map[string]AlarmStateName
 		changedAlarm   string
 		wantTriggering []string
-		description    string
 	}{
 		{
-			name:           "should return [m1, m2] when both are OK with OR logic",
+			name:           "positive both alarms in OK state with OR logic should trigger",
 			awsRule:        "OK(m1) OR OK(m2)",
 			compositeState: "OK",
 			childStates: map[string]AlarmStateName{
@@ -250,10 +234,9 @@ func TestGetAllTriggeringAlarms_CompositeOK(t *testing.T) {
 			},
 			changedAlarm:   "m1",
 			wantTriggering: []string{"m1", "m2"},
-			description:    "Both m1 and m2 are OK, both contribute to OK state",
 		},
 		{
-			name:           "should return [m1] when only m1 is OK with OR logic",
+			name:           "positive single alarm in OK state with OR logic should trigger",
 			awsRule:        "OK(m1) OR OK(m2)",
 			compositeState: "OK",
 			childStates: map[string]AlarmStateName{
@@ -262,10 +245,9 @@ func TestGetAllTriggeringAlarms_CompositeOK(t *testing.T) {
 			},
 			changedAlarm:   "m1",
 			wantTriggering: []string{"m1"},
-			description:    "Only m1 is OK, it's keeping composite OK",
 		},
 		{
-			name:           "should return [m1, m2] when both must be OK with AND logic",
+			name:           "positive both alarms in OK state with AND logic should trigger",
 			awsRule:        "OK(m1) AND OK(m2)",
 			compositeState: "OK",
 			childStates: map[string]AlarmStateName{
@@ -274,10 +256,9 @@ func TestGetAllTriggeringAlarms_CompositeOK(t *testing.T) {
 			},
 			changedAlarm:   "m2",
 			wantTriggering: []string{"m1", "m2"},
-			description:    "Both m1 AND m2 must be OK, so both are triggering",
 		},
 		{
-			name:           "should return [m3, m1, m2] when all satisfy OK conditions",
+			name:           "positive all alarms satisfying OK conditions should trigger",
 			awsRule:        "ALARM(m3) OR OK(m1) AND OK(m2)",
 			compositeState: "OK",
 			childStates: map[string]AlarmStateName{
@@ -287,10 +268,9 @@ func TestGetAllTriggeringAlarms_CompositeOK(t *testing.T) {
 			},
 			changedAlarm:   "m3",
 			wantTriggering: []string{"m3", "m1", "m2"},
-			description:    "m3 is not ALARM (expected for OK), m1 AND m2 are OK (both conditions satisfied)",
 		},
 		{
-			name:           "should return [maintenance] when maintenance is NOT ALARM",
+			name:           "positive alarm in NOT ALARM state should trigger",
 			awsRule:        "NOT ALARM(maintenance)",
 			compositeState: "OK",
 			childStates: map[string]AlarmStateName{
@@ -298,10 +278,9 @@ func TestGetAllTriggeringAlarms_CompositeOK(t *testing.T) {
 			},
 			changedAlarm:   "maintenance",
 			wantTriggering: []string{"maintenance"},
-			description:    "maintenance is NOT ALARM (it's OK), satisfying the condition",
 		},
 		{
-			name:           "should return empty when maintenance suppresses alarm",
+			name:           "negative suppressor alarm should not trigger",
 			awsRule:        "ALARM(cpu) AND NOT ALARM(maintenance)",
 			compositeState: "OK",
 			childStates: map[string]AlarmStateName{
@@ -310,10 +289,9 @@ func TestGetAllTriggeringAlarms_CompositeOK(t *testing.T) {
 			},
 			changedAlarm:   "maintenance",
 			wantTriggering: []string{},
-			description:    "maintenance being ALARM prevents composite ALARM (composite is OK, no clear triggering)",
 		},
 		{
-			name:           "should return [a, b, c] when all three are OK with AND logic",
+			name:           "positive all three alarms in OK state with AND logic should trigger",
 			awsRule:        "OK(a) AND OK(b) AND OK(c)",
 			compositeState: "OK",
 			childStates: map[string]AlarmStateName{
@@ -323,13 +301,12 @@ func TestGetAllTriggeringAlarms_CompositeOK(t *testing.T) {
 			},
 			changedAlarm:   "a",
 			wantTriggering: []string{"a", "b", "c"},
-			description:    "All three must be OK (AND), so all are triggering",
 		},
 		// ════════════════════════════════════════════════════════════
-		// NEW TESTS - ALARM triggers OK (inverted)
+		// ALARM triggers OK (inverted)
 		// ════════════════════════════════════════════════════════════
 		{
-			name:           "should return [m1, m2] when both are NOT ALARM with AND logic",
+			name:           "positive both alarms in OK state (NOT ALARM) with AND logic should trigger",
 			awsRule:        "ALARM(m1) AND ALARM(m2)",
 			compositeState: "OK",
 			childStates: map[string]AlarmStateName{
@@ -338,10 +315,9 @@ func TestGetAllTriggeringAlarms_CompositeOK(t *testing.T) {
 			},
 			changedAlarm:   "m1",
 			wantTriggering: []string{"m1", "m2"},
-			description:    "Both m1 and m2 being NOT ALARM (OK) keeps composite OK",
 		},
 		{
-			name:           "should return [m1, m2] when both are NOT ALARM with OR logic",
+			name:           "positive both alarms in OK state (NOT ALARM) with OR logic should trigger",
 			awsRule:        "ALARM(m1) OR ALARM(m2)",
 			compositeState: "OK",
 			childStates: map[string]AlarmStateName{
@@ -350,7 +326,6 @@ func TestGetAllTriggeringAlarms_CompositeOK(t *testing.T) {
 			},
 			changedAlarm:   "m1",
 			wantTriggering: []string{"m1", "m2"},
-			description:    "Both m1 and m2 being NOT ALARM keeps composite OK",
 		},
 	}
 
@@ -359,7 +334,6 @@ func TestGetAllTriggeringAlarms_CompositeOK(t *testing.T) {
 			transformed := TransformAlarmRule(tt.awsRule)
 			states := makeChildStates(tt.childStates)
 
-			t.Logf("Description: %s", tt.description)
 			t.Logf("AWS Rule: %s", tt.awsRule)
 			t.Logf("Changed Alarm: %s", tt.changedAlarm)
 
@@ -390,10 +364,9 @@ func TestGetAllTriggeringAlarms_CompositeINSUFFICIENT_DATA(t *testing.T) {
 		childStates    map[string]AlarmStateName
 		changedAlarm   string
 		wantTriggering []string
-		description    string
 	}{
 		{
-			name:           "should return [m1] when m1 has insufficient data",
+			name:           "positive single alarm with insufficient data should trigger",
 			awsRule:        "ALARM(m1)",
 			compositeState: "INSUFFICIENT_DATA",
 			childStates: map[string]AlarmStateName{
@@ -401,10 +374,9 @@ func TestGetAllTriggeringAlarms_CompositeINSUFFICIENT_DATA(t *testing.T) {
 			},
 			changedAlarm:   "m1",
 			wantTriggering: []string{"m1"},
-			description:    "m1 is in INSUFFICIENT_DATA state",
 		},
 		{
-			name:           "should return [a, b] when both alarms have insufficient data",
+			name:           "positive both alarms with insufficient data should trigger",
 			awsRule:        "ALARM(a) OR ALARM(b)",
 			compositeState: "INSUFFICIENT_DATA",
 			childStates: map[string]AlarmStateName{
@@ -413,10 +385,9 @@ func TestGetAllTriggeringAlarms_CompositeINSUFFICIENT_DATA(t *testing.T) {
 			},
 			changedAlarm:   "a",
 			wantTriggering: []string{"a", "b"},
-			description:    "Both alarms are in INSUFFICIENT_DATA state",
 		},
 		{
-			name:           "should return [a] when only a has insufficient data",
+			name:           "positive single alarm with insufficient data (AND logic) should trigger",
 			awsRule:        "ALARM(a) AND ALARM(b)",
 			compositeState: "INSUFFICIENT_DATA",
 			childStates: map[string]AlarmStateName{
@@ -425,7 +396,6 @@ func TestGetAllTriggeringAlarms_CompositeINSUFFICIENT_DATA(t *testing.T) {
 			},
 			changedAlarm:   "a",
 			wantTriggering: []string{"a"},
-			description:    "Only a is in INSUFFICIENT_DATA state",
 		},
 	}
 
@@ -433,8 +403,6 @@ func TestGetAllTriggeringAlarms_CompositeINSUFFICIENT_DATA(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			transformed := TransformAlarmRule(tt.awsRule)
 			states := makeChildStates(tt.childStates)
-
-			t.Logf("Description: %s", tt.description)
 
 			result, err := GetAllTriggeringAlarms(
 				transformed,
@@ -462,10 +430,9 @@ func TestGetAllTriggeringAlarms_INSUFFICIENT_DATA_InRule(t *testing.T) {
 		compositeState string
 		childStates    map[string]AlarmStateName
 		wantTriggering []string
-		description    string
 	}{
 		{
-			name:           "should return [m1] when m1 has insufficient data with OR logic",
+			name:           "positive single alarm with insufficient data in OR logic should trigger",
 			awsRule:        "INSUFFICIENT_DATA(m1) OR INSUFFICIENT_DATA(m2)",
 			compositeState: "OK",
 			childStates: map[string]AlarmStateName{
@@ -473,10 +440,9 @@ func TestGetAllTriggeringAlarms_INSUFFICIENT_DATA_InRule(t *testing.T) {
 				"m2": AlarmStateNameOK,
 			},
 			wantTriggering: []string{"m1"},
-			description:    "m1 is INSUFFICIENT_DATA (expected), m2 is not",
 		},
 		{
-			name:           "should return [m1, m2] when both have insufficient data",
+			name:           "positive both alarms with insufficient data in OR logic should trigger",
 			awsRule:        "INSUFFICIENT_DATA(m1) OR INSUFFICIENT_DATA(m2)",
 			compositeState: "OK",
 			childStates: map[string]AlarmStateName{
@@ -484,30 +450,27 @@ func TestGetAllTriggeringAlarms_INSUFFICIENT_DATA_InRule(t *testing.T) {
 				"m2": AlarmStateNameINSUFFICIENT_DATA,
 			},
 			wantTriggering: []string{"m1", "m2"},
-			description:    "Both have INSUFFICIENT_DATA (both expected)",
 		},
 		{
-			name:           "should return [metric] when metric is NOT INSUFFICIENT_DATA",
+			name:           "positive alarm not having insufficient data with NOT should trigger",
 			awsRule:        "NOT INSUFFICIENT_DATA(metric)",
 			compositeState: "OK",
 			childStates: map[string]AlarmStateName{
 				"metric": AlarmStateNameOK,
 			},
 			wantTriggering: []string{"metric"},
-			description:    "metric is NOT INSUFFICIENT_DATA (as expected)",
 		},
 		{
-			name:           "should return empty when metric IS INSUFFICIENT_DATA with NOT rule",
+			name:           "negative alarm having insufficient data with NOT and ALARM state should not trigger",
 			awsRule:        "NOT INSUFFICIENT_DATA(metric)",
 			compositeState: "ALARM",
 			childStates: map[string]AlarmStateName{
 				"metric": AlarmStateNameINSUFFICIENT_DATA,
 			},
 			wantTriggering: []string{},
-			description:    "metric IS INSUFFICIENT_DATA, but with NOT rule and ALARM state, no alarm is triggering (edge case)",
 		},
 		{
-			name:           "should return [health, metric] when both are in expected states",
+			name:           "positive multiple alarms in expected states should trigger",
 			awsRule:        "OK(health) AND NOT INSUFFICIENT_DATA(metric)",
 			compositeState: "OK",
 			childStates: map[string]AlarmStateName{
@@ -515,7 +478,6 @@ func TestGetAllTriggeringAlarms_INSUFFICIENT_DATA_InRule(t *testing.T) {
 				"metric": AlarmStateNameOK,
 			},
 			wantTriggering: []string{"health", "metric"},
-			description:    "Both in expected states (health=OK, metric not INSUFFICIENT_DATA)",
 		},
 	}
 
@@ -524,7 +486,6 @@ func TestGetAllTriggeringAlarms_INSUFFICIENT_DATA_InRule(t *testing.T) {
 			transformed := TransformAlarmRule(tt.awsRule)
 			states := makeChildStates(tt.childStates)
 
-			t.Logf("Description: %s", tt.description)
 			t.Logf("AWS Rule: %s", tt.awsRule)
 			t.Logf("Transformed: %s", transformed)
 
@@ -598,7 +559,7 @@ func TestGetAllTriggeringAlarms_EdgeCases(t *testing.T) {
 // ═══════════════════════════════════════════════════════════
 
 func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
-	t.Run("should return [primary, backup] when both servers are down", func(t *testing.T) {
+	t.Run("positive both servers down should return all triggering alarms", func(t *testing.T) {
 		rule := TransformAlarmRule("NOT OK(primary) AND NOT OK(backup)")
 		states := makeChildStates(map[string]AlarmStateName{
 			"primary": AlarmStateNameALARM,
@@ -609,10 +570,9 @@ func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.ElementsMatch(t, []string{"primary", "backup"}, result)
-		t.Logf("Both servers down - complete outage")
 	})
 
-	t.Run("should return empty when multiple regions are down with OR logic", func(t *testing.T) {
+	t.Run("negative multiple regions down with OR logic should not trigger individually", func(t *testing.T) {
 		rule := TransformAlarmRule("ALARM(us-east) OR ALARM(eu-west) OR ALARM(ap-south)")
 		states := makeChildStates(map[string]AlarmStateName{
 			"us-east":  AlarmStateNameALARM,
@@ -624,10 +584,9 @@ func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Empty(t, result)
-		t.Logf("Two regions down with OR - neither individually critical")
 	})
 
-	t.Run("should return [backend-1] when only one backend is healthy", func(t *testing.T) {
+	t.Run("positive single healthy backend should trigger", func(t *testing.T) {
 		rule := TransformAlarmRule("OK(backend-1) OR OK(backend-2) OR OK(backend-3)")
 		states := makeChildStates(map[string]AlarmStateName{
 			"backend-1": AlarmStateNameOK,
@@ -639,10 +598,9 @@ func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, []string{"backend-1"}, result)
-		t.Logf("Only backend-1 is healthy and keeping system operational")
 	})
 
-	t.Run("should return [database, api, frontend] when all components are healthy", func(t *testing.T) {
+	t.Run("positive all components healthy should all trigger", func(t *testing.T) {
 		rule := TransformAlarmRule("OK(database) AND OK(api) AND OK(frontend)")
 		states := makeChildStates(map[string]AlarmStateName{
 			"database": AlarmStateNameOK,
@@ -654,10 +612,9 @@ func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.ElementsMatch(t, []string{"database", "api", "frontend"}, result)
-		t.Logf("All critical components healthy")
 	})
 
-	t.Run("should return [api, database, metrics] when all systems have data", func(t *testing.T) {
+	t.Run("positive all systems healthy and with data should trigger", func(t *testing.T) {
 		rule := TransformAlarmRule("OK(api) AND OK(database) AND NOT INSUFFICIENT_DATA(metrics)")
 		states := makeChildStates(map[string]AlarmStateName{
 			"api":      AlarmStateNameOK,
@@ -669,10 +626,9 @@ func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.ElementsMatch(t, []string{"api", "database", "metrics"}, result)
-		t.Logf("All systems healthy and have sufficient data")
 	})
 
-	t.Run("should return [database, app-1] when cascading failure detected", func(t *testing.T) {
+	t.Run("positive cascading failure should return triggering alarms", func(t *testing.T) {
 		rule := TransformAlarmRule("ALARM(database) AND (ALARM(app-1) OR ALARM(app-2))")
 		states := makeChildStates(map[string]AlarmStateName{
 			"database": AlarmStateNameALARM,
@@ -684,13 +640,9 @@ func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.ElementsMatch(t, []string{"database", "app-1"}, result)
-		t.Logf("Database and app-1 both down - cascading failure")
 	})
-	// ════════════════════════════════════════════════════════════
-	// NEW REAL-WORLD TESTS - Inverted Logic
-	// ════════════════════════════════════════════════════════════
 
-	t.Run("should return [app-1, app-2] when both apps are healthy but composite alarms (inverted)", func(t *testing.T) {
+	t.Run("positive both healthy apps with inverted logic should trigger", func(t *testing.T) {
 		rule := TransformAlarmRule("OK(app-1) AND OK(app-2)")
 		states := makeChildStates(map[string]AlarmStateName{
 			"app-1": AlarmStateNameOK,
@@ -701,10 +653,9 @@ func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.ElementsMatch(t, []string{"app-1", "app-2"}, result)
-		t.Logf("Inverted logic: Both apps healthy triggers composite ALARM")
 	})
 
-	t.Run("should return [monitor] when monitor is healthy but should alarm (inverted)", func(t *testing.T) {
+	t.Run("positive healthy monitor with inverted logic should trigger", func(t *testing.T) {
 		rule := TransformAlarmRule("OK(monitor)")
 		states := makeChildStates(map[string]AlarmStateName{
 			"monitor": AlarmStateNameOK,
@@ -714,10 +665,9 @@ func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, []string{"monitor"}, result)
-		t.Logf("Inverted logic: Monitor healthy triggers composite ALARM")
 	})
 
-	t.Run("should return empty when all services are up with OR logic (inverted)", func(t *testing.T) {
+	t.Run("negative all services healthy with OR logic (inverted) should not trigger individually", func(t *testing.T) {
 		rule := TransformAlarmRule("OK(service-a) OR OK(service-b) OR OK(service-c)")
 		states := makeChildStates(map[string]AlarmStateName{
 			"service-a": AlarmStateNameOK,
@@ -729,10 +679,9 @@ func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Empty(t, result)
-		t.Logf("Inverted logic with OR: All services healthy but none individually required")
 	})
 
-	t.Run("should return [service-a] when only one service is up with OR logic (inverted)", func(t *testing.T) {
+	t.Run("positive single healthy service with OR logic (inverted) should trigger", func(t *testing.T) {
 		rule := TransformAlarmRule("OK(service-a) OR OK(service-b) OR OK(service-c)")
 		states := makeChildStates(map[string]AlarmStateName{
 			"service-a": AlarmStateNameOK,
@@ -744,6 +693,5 @@ func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, []string{"service-a"}, result)
-		t.Logf("Inverted logic: Only service-a healthy and sufficient for composite ALARM")
 	})
 }
