@@ -11,10 +11,20 @@ import (
 // AlarmStateName represents the state of an alarm
 type AlarmStateName string
 
+// AlarmName represents the name of an alarm
+type AlarmName string
+
+// AlarmState represents the state value of an alarm
+type AlarmState string
+
 const (
 	AlarmStateNameOK                AlarmStateName = "OK"
 	AlarmStateNameALARM             AlarmStateName = "ALARM"
 	AlarmStateNameINSUFFICIENT_DATA AlarmStateName = "INSUFFICIENT_DATA"
+
+	AlarmStateOK                AlarmState = "OK"
+	AlarmStateALARM             AlarmState = "ALARM"
+	AlarmStateINSUFFICIENT_DATA AlarmState = "INSUFFICIENT_DATA"
 )
 
 // GetAllTriggeringAlarms returns all alarms that are currently causing the composite alarm state.
@@ -25,7 +35,7 @@ const (
 // Parameters:
 //   - transformedRule: The alarm rule in govaluate format (from TransformAlarmRule)
 //   - compositeState: Current state of composite alarm ("ALARM", "OK", or "INSUFFICIENT_DATA")
-//   - childStates: Map of alarm states where key is state name and value is set of alarm names
+//   - childStates: Map of alarm names to their states
 //   - changedAlarm: The alarm that changed (optional, used for logging/context)
 //
 // Returns:
@@ -34,9 +44,9 @@ const (
 func GetAllTriggeringAlarms(
 	transformedRule string,
 	compositeState string,
-	childStates map[AlarmStateName]map[string]struct{},
+	childStates map[AlarmName]AlarmState,
 	changedAlarm string,
-) ([]string, error) {
+) ([]AlarmName, error) {
 
 	switch compositeState {
 	case "ALARM":
@@ -54,23 +64,22 @@ func GetAllTriggeringAlarms(
 }
 
 // getAllAlarmsCausingAlarmState finds all alarms causing composite to be ALARM.
-func getAllAlarmsCausingAlarmState(transformedRule string, childStates map[AlarmStateName]map[string]struct{}) ([]string, error) {
+func getAllAlarmsCausingAlarmState(transformedRule string, childStates map[AlarmName]AlarmState) ([]AlarmName, error) {
 	// CRITICAL: Handle empty rule
 	if transformedRule == "" {
 		return nil, fmt.Errorf("empty rule provided")
 	}
 
-	triggeringAlarms := []string{}
-	allAlarms := flattenChildStates(childStates)
+	var triggeringAlarms []AlarmName
 
 	// Extract alarm conditions from rule
 	alarmConditions := extractAlarmConditions(transformedRule)
 
 	// Filter alarms - but be more permissive
-	candidateAlarms := make(map[string]AlarmStateName)
+	candidateAlarms := make(map[AlarmName]AlarmState)
 
-	for alarmName, actualState := range allAlarms {
-		condition, found := alarmConditions[alarmName]
+	for alarmName, actualState := range childStates {
+		condition, found := alarmConditions[string(alarmName)]
 		if !found {
 			continue // Alarm not in rule
 		}
@@ -81,11 +90,11 @@ func getAllAlarmsCausingAlarmState(transformedRule string, childStates map[Alarm
 		// Case 1: Alarms with positive conditions (must be problematic to trigger ALARM state)
 		if condition.HasPositiveALARM || condition.HasPositiveOK || condition.HasPositiveINSUFFICIENT {
 			// Include if in problematic state
-			if actualState == AlarmStateNameALARM || actualState == AlarmStateNameINSUFFICIENT_DATA {
+			if actualState == AlarmStateALARM || actualState == AlarmStateINSUFFICIENT_DATA {
 				shouldInclude = true
 			}
 			// For OK state: only include if has positive OK (like OK(...) for alarm state trigger)
-			if actualState == AlarmStateNameOK && condition.HasPositiveOK {
+			if actualState == AlarmStateOK && condition.HasPositiveOK {
 				shouldInclude = true
 			}
 		}
@@ -94,15 +103,15 @@ func getAllAlarmsCausingAlarmState(transformedRule string, childStates map[Alarm
 		// These trigger ALARM state when the negated condition becomes FALSE
 		if condition.OnlyNegative {
 			// !OK(x) triggers ALARM when x is NOT in OK state (i.e., ALARM or INSUFFICIENT_DATA)
-			if condition.HasNegativeOK && (actualState == AlarmStateNameALARM || actualState == AlarmStateNameINSUFFICIENT_DATA) {
+			if condition.HasNegativeOK && (actualState == AlarmStateALARM || actualState == AlarmStateINSUFFICIENT_DATA) {
 				shouldInclude = true
 			}
 			// !ALARM(x) triggers ALARM when x is NOT in ALARM state (i.e., OK or INSUFFICIENT_DATA)
-			if condition.HasNegativeALARM && (actualState == AlarmStateNameOK || actualState == AlarmStateNameINSUFFICIENT_DATA) {
+			if condition.HasNegativeALARM && (actualState == AlarmStateOK || actualState == AlarmStateINSUFFICIENT_DATA) {
 				shouldInclude = true
 			}
 			// !INSUFFICIENT_DATA(x) triggers ALARM when x is NOT in INSUFFICIENT_DATA state
-			if condition.HasNegativeINSUFFICIENT && (actualState == AlarmStateNameOK || actualState == AlarmStateNameALARM) {
+			if condition.HasNegativeINSUFFICIENT && (actualState == AlarmStateOK || actualState == AlarmStateALARM) {
 				shouldInclude = true
 			}
 		}
@@ -114,27 +123,19 @@ func getAllAlarmsCausingAlarmState(transformedRule string, childStates map[Alarm
 
 	// Test only candidate alarms
 	for alarmName, originalState := range candidateAlarms {
-		var simulatedState AlarmStateName
+		var simulatedState AlarmState
 
 		switch originalState {
-		case AlarmStateNameOK:
-			simulatedState = AlarmStateNameALARM
-		case AlarmStateNameALARM:
-			simulatedState = AlarmStateNameOK
-		case AlarmStateNameINSUFFICIENT_DATA:
-			simulatedState = AlarmStateNameOK
+		case AlarmStateOK:
+			simulatedState = AlarmStateALARM
+		case AlarmStateALARM:
+			simulatedState = AlarmStateOK
+		case AlarmStateINSUFFICIENT_DATA:
+			simulatedState = AlarmStateOK
 		}
 
 		modifiedStates := copyChildStates(childStates)
-
-		if modifiedStates[originalState] != nil {
-			delete(modifiedStates[originalState], alarmName)
-		}
-
-		if modifiedStates[simulatedState] == nil {
-			modifiedStates[simulatedState] = make(map[string]struct{})
-		}
-		modifiedStates[simulatedState][alarmName] = struct{}{}
+		modifiedStates[alarmName] = simulatedState
 
 		modifiedResult, err := evaluateRule(transformedRule, modifiedStates)
 		if err != nil {
@@ -144,17 +145,17 @@ func getAllAlarmsCausingAlarmState(transformedRule string, childStates map[Alarm
 		if !modifiedResult {
 			// For OnlyNegative alarms, check if they're truly triggering or just suppressors
 			// A suppressor is an OnlyNegative alarm in a "safe" state (not triggering the negation)
-			if cond, ok := alarmConditions[alarmName]; ok && cond.OnlyNegative {
+			if cond, ok := alarmConditions[string(alarmName)]; ok && cond.OnlyNegative {
 				// Check if this is truly a trigger (problematic state) or a suppressor (safe state)
 				isSuppressor := false
 
-				if cond.HasNegativeOK && originalState == AlarmStateNameOK {
+				if cond.HasNegativeOK && originalState == AlarmStateOK {
 					// !OK(x) where x=OK is a suppressor (false negation)
 					isSuppressor = true
-				} else if cond.HasNegativeALARM && originalState == AlarmStateNameOK {
+				} else if cond.HasNegativeALARM && originalState == AlarmStateOK {
 					// !ALARM(x) where x=OK is a suppressor (false negation)
 					isSuppressor = true
-				} else if cond.HasNegativeINSUFFICIENT && originalState == AlarmStateNameOK {
+				} else if cond.HasNegativeINSUFFICIENT && originalState == AlarmStateOK {
 					// !INSUFFICIENT_DATA(x) where x=OK is a suppressor (false negation)
 					isSuppressor = true
 				}
@@ -248,13 +249,12 @@ func extractAlarmConditions(transformedRule string) map[string]*AlarmCondition {
 }
 
 // getAllAlarmsCausingOKState finds all alarms causing composite to be OK.
-func getAllAlarmsCausingOKState(transformedRule string, childStates map[AlarmStateName]map[string]struct{}) ([]string, error) {
+func getAllAlarmsCausingOKState(transformedRule string, childStates map[AlarmName]AlarmState) ([]AlarmName, error) {
 	expectedStates := parseExpectedStates(transformedRule)
-	triggeringAlarms := []string{}
-	alarmToState := flattenChildStates(childStates)
+	var triggeringAlarms []AlarmName
 
-	for alarmName, actualState := range alarmToState {
-		expected, found := expectedStates[alarmName]
+	for alarmName, actualState := range childStates {
+		expected, found := expectedStates[string(alarmName)]
 		if !found {
 			continue
 		}
@@ -263,15 +263,15 @@ func getAllAlarmsCausingOKState(transformedRule string, childStates map[AlarmSta
 
 		switch expected {
 		case ExpectedOK:
-			isInExpectedState = (actualState == AlarmStateNameOK)
+			isInExpectedState = (actualState == AlarmStateOK)
 		case ExpectedNotAlarm:
-			isInExpectedState = (actualState != AlarmStateNameALARM)
+			isInExpectedState = (actualState != AlarmStateALARM)
 		case ExpectedNotInsufficientData:
-			isInExpectedState = (actualState != AlarmStateNameINSUFFICIENT_DATA)
+			isInExpectedState = (actualState != AlarmStateINSUFFICIENT_DATA)
 		case ExpectedInsufficientData:
-			isInExpectedState = (actualState == AlarmStateNameINSUFFICIENT_DATA)
+			isInExpectedState = (actualState == AlarmStateINSUFFICIENT_DATA)
 		case ExpectedAlarm:
-			isInExpectedState = (actualState != AlarmStateNameALARM)
+			isInExpectedState = (actualState != AlarmStateALARM)
 		}
 
 		if isInExpectedState {
@@ -283,11 +283,11 @@ func getAllAlarmsCausingOKState(transformedRule string, childStates map[AlarmSta
 }
 
 // getAllAlarmsInInsufficientDataState returns all alarms in INSUFFICIENT_DATA state.
-func getAllAlarmsInInsufficientDataState(childStates map[AlarmStateName]map[string]struct{}) ([]string, error) {
-	insufficientDataAlarms := []string{}
+func getAllAlarmsInInsufficientDataState(childStates map[AlarmName]AlarmState) ([]AlarmName, error) {
+	var insufficientDataAlarms []AlarmName
 
-	if alarms, ok := childStates[AlarmStateNameINSUFFICIENT_DATA]; ok {
-		for alarmName := range alarms {
+	for alarmName, state := range childStates {
+		if state == AlarmStateINSUFFICIENT_DATA {
 			insufficientDataAlarms = append(insufficientDataAlarms, alarmName)
 		}
 	}
@@ -358,33 +358,31 @@ func parseExpectedStates(transformedRule string) map[string]ExpectedState {
 }
 
 // evaluateRule evaluates the transformed alarm rule
-func evaluateRule(transformedRule string, childStates map[AlarmStateName]map[string]struct{}) (bool, error) {
-	alarmToState := flattenChildStates(childStates)
-
+func evaluateRule(transformedRule string, childStates map[AlarmName]AlarmState) (bool, error) {
 	functions := map[string]govaluate.ExpressionFunction{
 		"ALARM": func(args ...interface{}) (interface{}, error) {
-			alarmName := args[0].(string)
-			state, ok := alarmToState[alarmName]
+			alarmName := AlarmName(args[0].(string))
+			state, ok := childStates[alarmName]
 			if !ok {
 				return false, fmt.Errorf("alarm %s not found in states", alarmName)
 			}
-			return state == AlarmStateNameALARM, nil
+			return state == AlarmStateALARM, nil
 		},
 		"OK": func(args ...interface{}) (interface{}, error) {
-			alarmName := args[0].(string)
-			state, ok := alarmToState[alarmName]
+			alarmName := AlarmName(args[0].(string))
+			state, ok := childStates[alarmName]
 			if !ok {
 				return false, fmt.Errorf("alarm %s not found in states", alarmName)
 			}
-			return state == AlarmStateNameOK, nil
+			return state == AlarmStateOK, nil
 		},
 		"INSUFFICIENT_DATA": func(args ...interface{}) (interface{}, error) {
-			alarmName := args[0].(string)
-			state, ok := alarmToState[alarmName]
+			alarmName := AlarmName(args[0].(string))
+			state, ok := childStates[alarmName]
 			if !ok {
 				return false, fmt.Errorf("alarm %s not found in states", alarmName)
 			}
-			return state == AlarmStateNameINSUFFICIENT_DATA, nil
+			return state == AlarmStateINSUFFICIENT_DATA, nil
 		},
 	}
 
@@ -401,28 +399,11 @@ func evaluateRule(transformedRule string, childStates map[AlarmStateName]map[str
 	return result.(bool), nil
 }
 
-// Helper functions
+func copyChildStates(childStates map[AlarmName]AlarmState) map[AlarmName]AlarmState {
+	result := make(map[AlarmName]AlarmState)
 
-func flattenChildStates(childStates map[AlarmStateName]map[string]struct{}) map[string]AlarmStateName {
-	result := make(map[string]AlarmStateName)
-
-	for state, alarms := range childStates {
-		for alarmName := range alarms {
-			result[alarmName] = state
-		}
-	}
-
-	return result
-}
-
-func copyChildStates(childStates map[AlarmStateName]map[string]struct{}) map[AlarmStateName]map[string]struct{} {
-	result := make(map[AlarmStateName]map[string]struct{})
-
-	for state, alarms := range childStates {
-		result[state] = make(map[string]struct{})
-		for alarmName := range alarms {
-			result[state][alarmName] = struct{}{}
-		}
+	for alarmName, state := range childStates {
+		result[alarmName] = state
 	}
 
 	return result
