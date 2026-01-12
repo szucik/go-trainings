@@ -26,10 +26,12 @@ type AlarmState struct {
 	State AlarmStateName
 }
 
-// GetAllTriggeringAlarms returns all alarms that are currently causing the composite alarm state.
+// GetAllTriggeringAlarms returns all alarms that are in the state specified by the rule,
+// causing composite to be in the given state.
 //
-// This implementation uses smart pre-analysis to skip alarms that cannot be triggering,
-// then falls back to testing remaining alarms.
+// For composite state ALARM: returns ALL alarms satisfying their conditions (including negative-only)
+// For composite state OK: returns alarms keeping the composite in OK state
+// For composite state INSUFFICIENT_DATA: returns all alarms in INSUFFICIENT_DATA state
 //
 // Parameters:
 //   - transformedRule: The alarm rule in govaluate format (from TransformAlarmRule)
@@ -62,21 +64,22 @@ func GetAllTriggeringAlarms(
 	}
 }
 
-// getAllAlarmsCausingAlarmState finds all alarms causing composite to be ALARM.
+// getAllAlarmsCausingAlarmState returns ALL alarms that satisfy their conditions in the rule,
+// causing composite to be ALARM.
+//
+// For OK(x) → alarm must be in OK state
+// For ALARM(x) → alarm must be in ALARM state
+// For !OK(x) → alarm must NOT be in OK state
+// For !ALARM(x) → alarm must NOT be in ALARM state
+//
+// This includes negative-only conditions (e.g., !ALARM(maintenance))
 func getAllAlarmsCausingAlarmState(transformedRule string, childStates []AlarmState) ([]AlarmName, error) {
-	// CRITICAL: Handle empty rule
 	if transformedRule == "" {
 		return nil, fmt.Errorf("empty rule provided")
 	}
 
-	// Convert to map for faster lookup (but preserve order for output)
-	// alarmToState := makeAlarmStateMap(childStates)
-
-	// Extract alarm conditions from rule
 	alarmConditions := extractAlarmConditions(transformedRule)
-
-	// Filter alarms - but be more permissive
-	candidateAlarms := []AlarmState{} // Preserve order
+	triggeringAlarms := []AlarmName{}
 
 	for _, alarmState := range childStates {
 		alarmName := string(alarmState.Name)
@@ -87,97 +90,52 @@ func getAllAlarmsCausingAlarmState(transformedRule string, childStates []AlarmSt
 			continue // Alarm not in rule
 		}
 
-		// CRITICAL FIX: Include alarms based on their actual state and condition
-		shouldInclude := false
+		// Check if alarm satisfies its condition in the rule
+		satisfiesCondition := false
 
-		// Case 1: Alarms with positive conditions (must be problematic to trigger ALARM state)
-		if condition.HasPositiveALARM || condition.HasPositiveOK || condition.HasPositiveINSUFFICIENT {
-			// Include if in problematic state
-			if actualState == AlarmStateNameALARM || actualState == AlarmStateNameINSUFFICIENT_DATA {
-				shouldInclude = true
-			}
-			// For OK state: only include if has positive OK (like OK(...) for alarm state trigger)
-			if actualState == AlarmStateNameOK && condition.HasPositiveOK {
-				shouldInclude = true
+		// Positive conditions: alarm must BE in specific state
+		if condition.HasPositiveOK {
+			if actualState == AlarmStateNameOK {
+				satisfiesCondition = true
 			}
 		}
 
-		// Case 2: Alarms ONLY in negative conditions (!OK(x), !ALARM(x), etc)
-		// These trigger ALARM state when the negated condition becomes FALSE
+		if condition.HasPositiveALARM {
+			if actualState == AlarmStateNameALARM {
+				satisfiesCondition = true
+			}
+		}
+
+		if condition.HasPositiveINSUFFICIENT {
+			if actualState == AlarmStateNameINSUFFICIENT_DATA {
+				satisfiesCondition = true
+			}
+		}
+
+		// Negative conditions: alarm must NOT be in specific state
+		// This includes OnlyNegative alarms (e.g., !ALARM(maintenance))
 		if condition.OnlyNegative {
-			// !OK(x) triggers ALARM when x is NOT in OK state (i.e., ALARM or INSUFFICIENT_DATA)
-			if condition.HasNegativeOK && (actualState == AlarmStateNameALARM || actualState == AlarmStateNameINSUFFICIENT_DATA) {
-				shouldInclude = true
-			}
-			// !ALARM(x) triggers ALARM when x is NOT in ALARM state (i.e., OK or INSUFFICIENT_DATA)
-			if condition.HasNegativeALARM && (actualState == AlarmStateNameOK || actualState == AlarmStateNameINSUFFICIENT_DATA) {
-				shouldInclude = true
-			}
-			// !INSUFFICIENT_DATA(x) triggers ALARM when x is NOT in INSUFFICIENT_DATA state
-			if condition.HasNegativeINSUFFICIENT && (actualState == AlarmStateNameOK || actualState == AlarmStateNameALARM) {
-				shouldInclude = true
-			}
-		}
-
-		if shouldInclude {
-			candidateAlarms = append(candidateAlarms, alarmState)
-		}
-	}
-
-	// Test only candidate alarms (preserve order)
-	triggeringAlarms := []AlarmName{}
-
-	for _, candidate := range candidateAlarms {
-		alarmName := string(candidate.Name)
-		originalState := candidate.State
-
-		var simulatedState AlarmStateName
-
-		switch originalState {
-		case AlarmStateNameOK:
-			simulatedState = AlarmStateNameALARM
-		case AlarmStateNameALARM:
-			simulatedState = AlarmStateNameOK
-		case AlarmStateNameINSUFFICIENT_DATA:
-			simulatedState = AlarmStateNameOK
-		}
-
-		modifiedStates := make([]AlarmState, len(childStates))
-		copy(modifiedStates, childStates)
-
-		// Update the specific alarm's state
-		for i := range modifiedStates {
-			if modifiedStates[i].Name == candidate.Name {
-				modifiedStates[i].State = simulatedState
-				break
-			}
-		}
-
-		modifiedResult, err := evaluateRule(transformedRule, modifiedStates)
-		if err != nil {
-			return nil, fmt.Errorf("failed to evaluate with modified states for alarm %s: %w", alarmName, err)
-		}
-
-		if !modifiedResult {
-			// For OnlyNegative alarms, check if they're truly triggering or just suppressors
-			if cond, ok := alarmConditions[alarmName]; ok && cond.OnlyNegative {
-				// Check if this is truly a trigger (problematic state) or a suppressor (safe state)
-				isSuppressor := false
-
-				if cond.HasNegativeOK && originalState == AlarmStateNameOK {
-					isSuppressor = true
-				} else if cond.HasNegativeALARM && originalState == AlarmStateNameOK {
-					isSuppressor = true
-				} else if cond.HasNegativeINSUFFICIENT && originalState == AlarmStateNameOK {
-					isSuppressor = true
-				}
-
-				if isSuppressor {
-					continue
+			if condition.HasNegativeOK {
+				if actualState != AlarmStateNameOK {
+					satisfiesCondition = true
 				}
 			}
 
-			triggeringAlarms = append(triggeringAlarms, candidate.Name)
+			if condition.HasNegativeALARM {
+				if actualState != AlarmStateNameALARM {
+					satisfiesCondition = true
+				}
+			}
+
+			if condition.HasNegativeINSUFFICIENT {
+				if actualState != AlarmStateNameINSUFFICIENT_DATA {
+					satisfiesCondition = true
+				}
+			}
+		}
+
+		if satisfiesCondition {
+			triggeringAlarms = append(triggeringAlarms, alarmState.Name)
 		}
 	}
 

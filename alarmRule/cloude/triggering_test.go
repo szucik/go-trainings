@@ -1,6 +1,7 @@
 package alarmrule
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,14 +9,20 @@ import (
 )
 
 // Helper function to create childStates structure as ordered slice
+// Sorts alarm names alphabetically for deterministic order
 func makeChildStates(states map[string]string) []AlarmState {
-	result := []AlarmState{}
+	// Extract keys and sort them for deterministic order
+	keys := make([]string, 0, len(states))
+	for key := range states {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
 
-	// Iterate through map and create ordered slice
-	for alarmName, stateName := range states {
+	result := []AlarmState{}
+	for _, alarmName := range keys {
 		result = append(result, AlarmState{
 			Name:  AlarmName(alarmName),
-			State: AlarmStateName(stateName),
+			State: AlarmStateName(states[alarmName]),
 		})
 	}
 
@@ -68,7 +75,7 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			wantTriggering: []string{"cpu", "mem"},
 		},
 		{
-			name:           "positive one alarm in ALARM state with complex OR expression should trigger",
+			name:           "positive one alarm in ALARM state with complex OR expression should trigger with negative",
 			awsRule:        "(ALARM(a) OR ALARM(b)) AND NOT ALARM(maint)",
 			compositeState: "ALARM",
 			childStates: map[string]string{
@@ -77,10 +84,10 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 				"maint": "OK",
 			},
 			changedAlarm:   "a",
-			wantTriggering: []string{"a"},
+			wantTriggering: []string{"a", "maint"}, // ✅ ZMIENIONE: maint też jest liczony
 		},
 		{
-			name:           "negative both alarms in ALARM state with OR logic should not trigger individually",
+			name:           "positive both alarms in ALARM state with OR logic should both trigger with negative",
 			awsRule:        "(ALARM(a) OR ALARM(b)) AND NOT ALARM(maint)",
 			compositeState: "ALARM",
 			childStates: map[string]string{
@@ -89,7 +96,7 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 				"maint": "OK",
 			},
 			changedAlarm:   "b",
-			wantTriggering: []string{},
+			wantTriggering: []string{"a", "b", "maint"}, // ✅ ZMIENIONE: wszystkie spełniające
 		},
 		{
 			name:           "positive all three alarms in ALARM state with AND logic should all trigger",
@@ -137,7 +144,7 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 			wantTriggering: []string{"cpu"},
 		},
 		{
-			name:           "positive alarm in ALARM state with NOT condition on maintenance should trigger",
+			name:           "positive alarm in ALARM state with NOT condition on maintenance should trigger both",
 			awsRule:        "ALARM(cpu) AND NOT ALARM(maintenance)",
 			compositeState: "ALARM",
 			childStates: map[string]string{
@@ -145,7 +152,7 @@ func TestGetAllTriggeringAlarms_CompositeALARM(t *testing.T) {
 				"maintenance": "OK",
 			},
 			changedAlarm:   "cpu",
-			wantTriggering: []string{"cpu"},
+			wantTriggering: []string{"cpu", "maintenance"}, // ✅ ZMIENIONE: maintenance też liczony
 		},
 		// ════════════════════════════════════════════════════════════
 		// Inverted Logic (OK triggers ALARM)
@@ -354,6 +361,7 @@ func TestGetAllTriggeringAlarms_CompositeOK(t *testing.T) {
 				tt.changedAlarm,
 			)
 			require.NoError(t, err)
+
 			t.Logf("Triggering Alarms: %v", result)
 
 			assert.ElementsMatch(t, tt.wantTriggering, alarmNamesToStrings(result))
@@ -364,6 +372,7 @@ func TestGetAllTriggeringAlarms_CompositeOK(t *testing.T) {
 // ═══════════════════════════════════════════════════════════
 // Tests for Composite State = INSUFFICIENT_DATA
 // ═══════════════════════════════════════════════════════════
+
 func TestGetAllTriggeringAlarms_CompositeINSUFFICIENT_DATA(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -406,6 +415,7 @@ func TestGetAllTriggeringAlarms_CompositeINSUFFICIENT_DATA(t *testing.T) {
 			wantTriggering: []string{"a"},
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			transformed := TransformAlarmRule(tt.awsRule)
@@ -429,6 +439,7 @@ func TestGetAllTriggeringAlarms_CompositeINSUFFICIENT_DATA(t *testing.T) {
 // ═══════════════════════════════════════════════════════════
 // Tests for INSUFFICIENT_DATA in AlarmRule
 // ═══════════════════════════════════════════════════════════
+
 func TestGetAllTriggeringAlarms_INSUFFICIENT_DATA_InRule(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -486,6 +497,7 @@ func TestGetAllTriggeringAlarms_INSUFFICIENT_DATA_InRule(t *testing.T) {
 			wantTriggering: []string{"health", "metric"},
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			transformed := TransformAlarmRule(tt.awsRule)
@@ -512,10 +524,12 @@ func TestGetAllTriggeringAlarms_INSUFFICIENT_DATA_InRule(t *testing.T) {
 // ═══════════════════════════════════════════════════════════
 // Edge Cases
 // ═══════════════════════════════════════════════════════════
+
 func TestGetAllTriggeringAlarms_EdgeCases(t *testing.T) {
 	t.Run("should return error when composite state is invalid", func(t *testing.T) {
 		rule := "ALARM('m1')"
 		states := makeChildStates(map[string]string{"m1": "ALARM"})
+
 		_, err := GetAllTriggeringAlarms(rule, "INVALID_STATE", states, "m1")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown composite state")
@@ -560,6 +574,7 @@ func TestGetAllTriggeringAlarms_EdgeCases(t *testing.T) {
 // ═══════════════════════════════════════════════════════════
 // Real-World Scenarios
 // ═══════════════════════════════════════════════════════════
+
 func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 	t.Run("positive both servers down should return all triggering alarms", func(t *testing.T) {
 		rule := TransformAlarmRule("NOT OK(primary) AND NOT OK(backup)")
@@ -567,13 +582,14 @@ func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 			"primary": "ALARM",
 			"backup":  "ALARM",
 		})
+
 		result, err := GetAllTriggeringAlarms(rule, "ALARM", states, "backup")
 		require.NoError(t, err)
 
 		assert.ElementsMatch(t, []string{"primary", "backup"}, alarmNamesToStrings(result))
 	})
 
-	t.Run("negative multiple regions down with OR logic should not trigger individually", func(t *testing.T) {
+	t.Run("positive multiple regions down with OR logic should show all satisfying", func(t *testing.T) {
 		rule := TransformAlarmRule("ALARM(us-east) OR ALARM(eu-west) OR ALARM(ap-south)")
 		states := makeChildStates(map[string]string{
 			"us-east":  "ALARM",
@@ -584,7 +600,7 @@ func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 		result, err := GetAllTriggeringAlarms(rule, "ALARM", states, "ap-south")
 		require.NoError(t, err)
 
-		assert.Empty(t, result)
+		assert.ElementsMatch(t, []string{"us-east", "ap-south"}, alarmNamesToStrings(result)) // ✅ ZMIENIONE
 	})
 
 	t.Run("positive single healthy backend should trigger", func(t *testing.T) {
@@ -668,7 +684,7 @@ func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 		assert.Equal(t, []string{"monitor"}, alarmNamesToStrings(result))
 	})
 
-	t.Run("negative all services healthy with OR logic (inverted) should not trigger individually", func(t *testing.T) {
+	t.Run("positive all services healthy with OR logic (inverted) should show all", func(t *testing.T) {
 		rule := TransformAlarmRule("OK(service-a) OR OK(service-b) OR OK(service-c)")
 		states := makeChildStates(map[string]string{
 			"service-a": "OK",
@@ -679,7 +695,7 @@ func TestGetAllTriggeringAlarms_RealWorldScenarios(t *testing.T) {
 		result, err := GetAllTriggeringAlarms(rule, "ALARM", states, "service-a")
 		require.NoError(t, err)
 
-		assert.Empty(t, result)
+		assert.ElementsMatch(t, []string{"service-a", "service-b", "service-c"}, alarmNamesToStrings(result)) // ✅ ZMIENIONE
 	})
 
 	t.Run("positive single healthy service with OR logic (inverted) should trigger", func(t *testing.T) {
