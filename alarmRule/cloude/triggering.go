@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-
-	"github.com/Knetic/govaluate"
 )
 
 // AlarmStateName represents the state of an alarm
@@ -90,47 +88,22 @@ func getAllAlarmsCausingAlarmState(transformedRule string, childStates []AlarmSt
 			continue // Alarm not in rule
 		}
 
-		// Check if alarm satisfies its condition in the rule
 		satisfiesCondition := false
 
 		// Positive conditions: alarm must BE in specific state
-		if condition.HasPositiveOK {
-			if actualState == AlarmStateNameOK {
-				satisfiesCondition = true
-			}
-		}
-
-		if condition.HasPositiveALARM {
-			if actualState == AlarmStateNameALARM {
-				satisfiesCondition = true
-			}
-		}
-
-		if condition.HasPositiveINSUFFICIENT {
-			if actualState == AlarmStateNameINSUFFICIENT_DATA {
-				satisfiesCondition = true
-			}
+		if (condition.HasPositiveOK && actualState == AlarmStateNameOK) ||
+			(condition.HasPositiveALARM && actualState == AlarmStateNameALARM) ||
+			(condition.HasPositiveINSUFFICIENT && actualState == AlarmStateNameINSUFFICIENT_DATA) {
+			satisfiesCondition = true
 		}
 
 		// Negative conditions: alarm must NOT be in specific state
 		// This includes OnlyNegative alarms (e.g., !ALARM(maintenance))
 		if condition.OnlyNegative {
-			if condition.HasNegativeOK {
-				if actualState != AlarmStateNameOK {
-					satisfiesCondition = true
-				}
-			}
-
-			if condition.HasNegativeALARM {
-				if actualState != AlarmStateNameALARM {
-					satisfiesCondition = true
-				}
-			}
-
-			if condition.HasNegativeINSUFFICIENT {
-				if actualState != AlarmStateNameINSUFFICIENT_DATA {
-					satisfiesCondition = true
-				}
+			if (condition.HasNegativeOK && actualState != AlarmStateNameOK) ||
+				(condition.HasNegativeALARM && actualState != AlarmStateNameALARM) ||
+				(condition.HasNegativeINSUFFICIENT && actualState != AlarmStateNameINSUFFICIENT_DATA) {
+				satisfiesCondition = true
 			}
 		}
 
@@ -276,6 +249,7 @@ const (
 func parseExpectedStates(transformedRule string) map[string]ExpectedState {
 	expectedStates := make(map[string]ExpectedState)
 
+	// OK() calls
 	reOK := regexp.MustCompile(`OK\('([^']+)'\)`)
 	matchesOK := reOK.FindAllStringSubmatch(transformedRule, -1)
 	for _, match := range matchesOK {
@@ -287,6 +261,8 @@ func parseExpectedStates(transformedRule string) map[string]ExpectedState {
 		}
 	}
 
+	// ALARM() and !ALARM() calls
+	// For composite=OK state, both ALARM(x) and !ALARM(x) mean the alarm should NOT be in ALARM state
 	reAlarm := regexp.MustCompile(`!?ALARM\('([^']+)'\)`)
 	matchesAlarm := reAlarm.FindAllStringSubmatch(transformedRule, -1)
 	for _, match := range matchesAlarm {
@@ -294,15 +270,11 @@ func parseExpectedStates(transformedRule string) map[string]ExpectedState {
 			alarmName := match[1]
 			alarmName = strings.ReplaceAll(alarmName, `\'`, `'`)
 			alarmName = strings.ReplaceAll(alarmName, `\"`, `"`)
-			fullMatch := match[0]
-			if strings.HasPrefix(fullMatch, "!") {
-				expectedStates[alarmName] = ExpectedNotAlarm
-			} else {
-				expectedStates[alarmName] = ExpectedNotAlarm
-			}
+			expectedStates[alarmName] = ExpectedNotAlarm
 		}
 	}
 
+	// INSUFFICIENT_DATA() and !INSUFFICIENT_DATA() calls
 	reInsufficient := regexp.MustCompile(`!?INSUFFICIENT_DATA\('([^']+)'\)`)
 	matchesInsufficient := reInsufficient.FindAllStringSubmatch(transformedRule, -1)
 	for _, match := range matchesInsufficient {
@@ -320,59 +292,4 @@ func parseExpectedStates(transformedRule string) map[string]ExpectedState {
 	}
 
 	return expectedStates
-}
-
-// evaluateRule evaluates the transformed alarm rule
-func evaluateRule(transformedRule string, childStates []AlarmState) (bool, error) {
-	alarmToState := makeAlarmStateMap(childStates)
-
-	functions := map[string]govaluate.ExpressionFunction{
-		"ALARM": func(args ...interface{}) (interface{}, error) {
-			alarmName := args[0].(string)
-			state, ok := alarmToState[alarmName]
-			if !ok {
-				return false, fmt.Errorf("alarm %s not found in states", alarmName)
-			}
-			return state == AlarmStateNameALARM, nil
-		},
-		"OK": func(args ...interface{}) (interface{}, error) {
-			alarmName := args[0].(string)
-			state, ok := alarmToState[alarmName]
-			if !ok {
-				return false, fmt.Errorf("alarm %s not found in states", alarmName)
-			}
-			return state == AlarmStateNameOK, nil
-		},
-		"INSUFFICIENT_DATA": func(args ...interface{}) (interface{}, error) {
-			alarmName := args[0].(string)
-			state, ok := alarmToState[alarmName]
-			if !ok {
-				return false, fmt.Errorf("alarm %s not found in states", alarmName)
-			}
-			return state == AlarmStateNameINSUFFICIENT_DATA, nil
-		},
-	}
-
-	expr, err := govaluate.NewEvaluableExpressionWithFunctions(transformedRule, functions)
-	if err != nil {
-		return false, fmt.Errorf("failed to parse expression: %w", err)
-	}
-
-	result, err := expr.Evaluate(nil)
-	if err != nil {
-		return false, fmt.Errorf("failed to evaluate expression: %w", err)
-	}
-
-	return result.(bool), nil
-}
-
-// Helper functions
-
-// makeAlarmStateMap converts slice to map for faster lookup
-func makeAlarmStateMap(childStates []AlarmState) map[string]AlarmStateName {
-	result := make(map[string]AlarmStateName)
-	for _, alarmState := range childStates {
-		result[string(alarmState.Name)] = alarmState.State
-	}
-	return result
 }
