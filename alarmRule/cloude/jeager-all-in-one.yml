@@ -1,7 +1,7 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: observability
+
+
+
+# jaeger-all-in-one:4317
 
 ---
 apiVersion: v1
