@@ -36,6 +36,9 @@ _M._VERSION = "1.0.0"
 -- Nazwa shared dict zadeklarowanego w nginx.conf
 local SHARED_DICT = "tls_timing"
 
+-- Prefiks klucza shared dict — gwarantuje unikalność i łatwość debugowania
+local TIMING_KEY_PREFIX = "tls_start:"
+
 -- TTL wpisu w shared dict (sekundy)
 -- Musi być dłuższy niż maksymalny czas TLS handshake
 local ENTRY_TTL = 30
@@ -52,33 +55,15 @@ local function get_var(name)
     return val
 end
 
--- -----------------------------------------------------------------------------
--- Prywatne: unikalny klucz dla połączenia w shared dict
--- Kombinacja ip:port jest unikalna per aktywne połączenie TCP
--- -----------------------------------------------------------------------------
-local function conn_key()
-    -- Bezpieczne pobieranie — w niektórych kontekstach (ssl_certificate_by_lua)
-    -- dostęp do niektórych zmiennych może być zablokowany. Najpierw spróbuj
-    -- odczytać `remote_addr:remote_port`. Jeśli to nie zadziała, spróbuj
-    -- `connection` (dostępne w obu kontekstach). W ostateczności użyj
-    -- unikalnego fallbacku.
-    local ok, addr = pcall(function() return ngx.var.remote_addr end)
-    local ok2, port = pcall(function() return ngx.var.remote_port end)
-    if ok and ok2 and addr and addr ~= "" and port and port ~= "" then
-        return addr .. ":" .. port
+-- Unikalny klucz dla TLS timing — opiera się na $connection ID
+-- $connection jest dostępne w obu fazach: ssl_certificate_by_lua i log_by_lua
+local function tls_timing_key()
+    local ok, conn = pcall(function() return ngx.var.connection end)
+    if not (ok and conn and conn ~= "") then
+        ngx.log(ngx.ERR, "connection_log: nie mogę odczytać $connection")
+        return nil
     end
-
-    local ok3, conn = pcall(function() return ngx.var.connection end)
-    if ok3 and conn and conn ~= "" then
-        return "conn:" .. tostring(conn)
-    end
-
-    local ok4, sess = pcall(function() return ngx.var.ssl_session_id end)
-    if ok4 and sess and sess ~= "" then
-        return "sess:" .. tostring(sess)
-    end
-
-    return "anon:" .. tostring(ngx.now()) .. ":" .. tostring(math.random(1000000))
+    return TIMING_KEY_PREFIX .. tostring(conn)
 end
 
 -- -----------------------------------------------------------------------------
@@ -237,19 +222,18 @@ function _M.ssl_certificate_phase()
         return
     end
 
-    local key = conn_key()
+    local key = tls_timing_key()
+    if not key then
+        return
+    end
+
     local ok, err, forcible = shared:set(key, ngx.now(), ENTRY_TTL)
-    -- Logowanie debugowe (będzie widoczne w error.log)
-    local ok_log, _ = pcall(function()
-        ngx.log(ngx.ERR, "connection_log: ssl_certificate_phase set key=", tostring(key), " ok=", tostring(ok), " err=", tostring(err))
-    end)
 
     if not ok then
         ngx.log(ngx.WARN,
             "connection_log: nie można zapisać TLS start time: ", err
         )
     elseif forcible then
-        -- shared dict jest pełny — usunięto stary wpis by zmieścić nowy
         ngx.log(ngx.WARN,
             "connection_log: shared dict pełny, usunięto stary wpis"
         )
@@ -268,6 +252,10 @@ end
 --   $conn_leaf_cert_validity      — ważność certyfikatu w formacie AWS
 --   $conn_leaf_cert_serial        — numer seryjny certyfikatu
 --   $conn_tls_verify_status       — status weryfikacji w formacie AWS
+--
+-- WAŻNE: Loguje się raz na połączenie TCP, a nie na każdy request HTTP.
+-- Aby tego dokonać, zapamiętujemy w shared dict że już zalogowaliśmy to
+-- połączenie i pomijamy kolejne requesty na tym samym connection.
 -- -----------------------------------------------------------------------------
 function _M.log_phase()
     -- ------------------------------------------------------------------
@@ -277,45 +265,14 @@ function _M.log_phase()
     local shared = ngx.shared[SHARED_DICT]
 
     if shared then
-        -- Przy próbie dopasowania klucza sprawdzamy kilka kandydatów,
-        -- ponieważ różne konteksty (ssl_certificate_by_lua vs log_by_lua)
-        -- mogą mieć różne ograniczenia co do dostępnych zmiennych.
-        local candidates = {}
-        -- adres:port
-        local ok, addr = pcall(function() return ngx.var.remote_addr end)
-        local ok2, port = pcall(function() return ngx.var.remote_port end)
-        if ok and ok2 and addr and addr ~= "" and port and port ~= "" then
-            table.insert(candidates, addr .. ":" .. port)
-        end
-        -- connection id
-        local ok3, conn = pcall(function() return ngx.var.connection end)
-        if ok3 and conn and conn ~= "" then
-            table.insert(candidates, "conn:" .. tostring(conn))
-        end
-        -- ssl session id
-        local ok4, sess = pcall(function() return ngx.var.ssl_session_id end)
-        if ok4 and sess and sess ~= "" then
-            table.insert(candidates, "sess:" .. tostring(sess))
-        end
-
-        local start_time
-        local matched_key
-        for _, k in ipairs(candidates) do
-            start_time = shared:get(k)
+        local key = tls_timing_key()
+        if key then
+            local start_time = shared:get(key)
             if start_time then
-                matched_key = k
-                break
+                local latency = ngx.now() - start_time
+                handshake_latency = string.format("%.3f", latency)
+                shared:delete(key)
             end
-        end
-
-        if start_time then
-            local latency = ngx.now() - start_time
-            handshake_latency = string.format("%.3f", latency)
-            if matched_key then
-                shared:delete(matched_key)
-            end
-        else
-            handshake_latency = "-"
         end
     end
 
@@ -355,6 +312,20 @@ function _M.log_phase()
     safe_set("conn_leaf_cert_validity",    validity)
     safe_set("conn_leaf_cert_serial",      get_var("ssl_client_serial"))
     safe_set("conn_tls_verify_status",     verify_status)
+
+    -- ------------------------------------------------------------------
+    -- 5. Zapamiętaj że to połączenie zostało zalogowane
+    -- ------------------------------------------------------------------
+    if logged_dict then
+        local ok, err = pcall(function()
+            logged_dict:set(conn_id, 1, ENTRY_TTL)
+        end)
+        if not ok then
+            ngx.log(ngx.WARN,
+                "connection_log: nie można zapamiętać zalogowanego conn_id: ", err
+            )
+        end
+    end
 end
 
 -- =============================================================================

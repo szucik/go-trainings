@@ -3,17 +3,23 @@ services:
   backend:
     image: python:3.12-alpine
     command: python3 -m http.server 8080
-    network_mode: host
+    container_name: nginx_backend
     restart: unless-stopped
 
   openresty:
     image: openresty/openresty:alpine
-    network_mode: host
+    container_name: nginx_openresty
+    ports:
+      - "80:80"
+      - "443:443"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx.conf:/tmp/nginx.conf.orig:ro
       - ./connection_log.lua:/etc/nginx/lua/connection_log.lua:ro
       - ./certs:/etc/nginx/certs:ro
       - ./logs:/var/log/nginx
     depends_on:
       - backend
+    entrypoint: |
+      sh -c 'sed "s|127.0.0.1:8080|nginx_backend:8080|g" /tmp/nginx.conf.orig > /etc/nginx/nginx.conf && \
+             /usr/local/openresty/bin/openresty -c /etc/nginx/nginx.conf -g "daemon off;"'
     restart: unless-stopped
